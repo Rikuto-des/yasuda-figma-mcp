@@ -194,7 +194,7 @@ Paste the same value into the Figma plugin once. If both a secret **and** a matc
 - **"Figma plugin is not connected"** — run the plugin and Connect; check the token/URL/channel match. The bridge log should show `plugin joined`.
 - **"Bridge is not connected"** — `npm run bridge` running in the Codespace? `BRIDGE_TOKEN` set (`npm run setup`)?
 - **Plugin won't connect** — is `gh codespace ports forward 3055:3055` running locally? Plugin URL `ws://localhost:3055`? Tunnel dropped → restart it.
-- **Plugin flapping (join/leave loop)** — you have two plugin instances open (e.g. two files). Keep only one running.
+- **Multiple pages vs files** — switching **pages** in the same file needs nothing: the plugin stays connected and follows the active page (target other pages by `nodeId`/`url`, or `allPages:true` for search). Switching **files** closes the plugin (Figma runs plugins per file) — just re-run it; it **auto-connects** with your saved token. If it's open in several files at once, the newest connection wins and the others go idle (no flapping).
 - **Image not shown in Copilot** — use a vision-capable model. `yfigma_get_screenshot` also accepts `saveToFile: true` to write the PNG into the Codespace (still no S3).
 
 ## Contributing

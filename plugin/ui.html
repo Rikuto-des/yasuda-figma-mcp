@@ -153,6 +153,9 @@
             $("url").value = msg.settings.url || "";
             $("token").value = msg.settings.token || "";
             $("channel").value = msg.settings.channel || "default";
+            // Auto-connect on launch: switching files becomes one step — just run
+            // the plugin and it reconnects with your saved URL/token.
+            if ($("url").value && $("token").value) connect();
           }
         } else if (msg.type === "response") {
           // Result of a read op — relay back to the bridge/MCP.
@@ -221,8 +224,16 @@
           }
         };
 
-        ws.onclose = function () {
+        ws.onclose = function (ev) {
           setConnected(false);
+          // Replaced by a newer instance (e.g. you opened the plugin in another
+          // file). Stay idle instead of fighting over the channel.
+          if (ev && ev.code === 4002) {
+            reconnectOnClose = false;
+            setStatus("Idle — a newer plugin instance took over", "");
+            log("Replaced by a newer instance; not reconnecting.");
+            return;
+          }
           setStatus("Disconnected", reconnectOnClose ? "err" : "");
           if (reconnectOnClose) {
             log("Connection closed; retrying in 2s…");
