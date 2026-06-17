@@ -64,8 +64,6 @@ async function handleRequest(op, params) {
       return handleSearch(params);
     case "libraries":
       return handleLibraries();
-    case "code_connect_map":
-      return handleCodeConnect(params);
     case "figjam":
       return handleFigjam(params);
     case "document_info":
@@ -347,26 +345,6 @@ async function handleLibraries() {
   } catch (e) {
     return { note, error: errMsg(e), libraryVariableCollections: [] };
   }
-}
-
-// ---------------------------------------------------------------------------
-// code_connect_map (best effort)
-// ---------------------------------------------------------------------------
-
-async function handleCodeConnect(params) {
-  const root = params.allPages ? figma.root : figma.currentPage;
-  let comps = [];
-  try {
-    comps = root.findAllWithCriteria({ types: ["COMPONENT", "COMPONENT_SET"] });
-  } catch (e) {
-    // ignore
-  }
-  return {
-    note:
-      "Best-effort: full Code Connect mappings live in Figma's Code Connect service and are not exposed to the plugin API. These component keys are the join key you can map to code components.",
-    count: comps.length,
-    components: comps.map((c) => ({ id: c.id, name: c.name, type: c.type, key: c.key || undefined })),
-  };
 }
 
 // ---------------------------------------------------------------------------

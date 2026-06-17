@@ -45,7 +45,6 @@ read 系も、すべて Figma プラグイン API でローカル取得します
 | `figma_get_variable_defs` | デザイントークン変数（モード別の値つき）と所属コレクション | `get_variable_defs` |
 | `figma_search_design_system` | コンポーネント/スタイルを名前で検索 | `search_design_system` |
 | `figma_get_libraries` | 利用可能なチームライブラリ変数コレクション（※制約あり） | `get_libraries` |
-| `figma_get_code_connect_map` | コンポーネントの key 一覧（※ベストエフォート） | `get_code_connect_map` |
 | `figma_get_figjam` | FigJam ボードの直列化 | `get_figjam` |
 | `figma_get_document_info` | ファイル/ページ/選択状況 | （補助） |
 | `figma_whoami` | 現在の Figma ユーザーと開いているファイル | `whoami` |
@@ -54,7 +53,7 @@ read 系も、すべて Figma プラグイン API でローカル取得します
 
 - **`figma_get_design_context`** は Figma のコード生成そのものを再現するのではなく、**LLM がコード化するための生のデザインデータ**を返します。Copilot 側でコードを生成してください。
 - **`figma_get_libraries`** はプラグイン API の制約で、チームライブラリの **変数コレクション**しか列挙できません。コンポーネントライブラリの完全な列挙は不可。
-- **Code Connect** の完全なマッピングは Figma のクラウドサービス側にあり、プラグイン API からは取得できません。`figma_get_code_connect_map` は join 用の key 一覧までです。
+- **Code Connect** は本プロジェクトの対象外です。完全なマッピングは Figma のクラウドサービス側にあり、プラグイン API からは取得できないため、ツールとしては提供していません。
 
 ## セットアップ
 

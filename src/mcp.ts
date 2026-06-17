@@ -381,28 +381,7 @@ server.registerTool(
   },
 );
 
-// 7) Code Connect map — best-effort component key listing.
-server.registerTool(
-  "figma_get_code_connect_map",
-  {
-    title: "Get Figma Code Connect map (best effort)",
-    description:
-      "Return components in the file with their ids and published keys, which are the join key for Code Connect. Note: full Code Connect mappings live in Figma's Code Connect service and are not exposed to the plugin API, so this is a best-effort listing, not a 1:1 replacement for the official tool.",
-    inputSchema: {
-      allPages: z.boolean().optional().describe("Search across all pages (default false)."),
-    },
-  },
-  async (args) => {
-    try {
-      const result = await bridge.request("code_connect_map", { allPages: args.allPages ?? false });
-      return jsonResult(result);
-    } catch (err) {
-      return errorResult(err);
-    }
-  },
-);
-
-// 8) FigJam — serialize a FigJam board.
+// 7) FigJam — serialize a FigJam board.
 server.registerTool(
   "figma_get_figjam",
   {
@@ -423,7 +402,7 @@ server.registerTool(
   },
 );
 
-// 9) Document info — file, pages, current page, selection summary.
+// 8) Document info — file, pages, current page, selection summary.
 server.registerTool(
   "figma_get_document_info",
   {
@@ -442,7 +421,7 @@ server.registerTool(
   },
 );
 
-// 10) Whoami — current Figma user + open file context.
+// 9) Whoami — current Figma user + open file context.
 server.registerTool(
   "figma_whoami",
   {
