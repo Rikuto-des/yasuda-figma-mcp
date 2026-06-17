@@ -4,7 +4,7 @@
   "features": {
     "ghcr.io/devcontainers/features/sshd:1": {}
   },
-  "postCreateCommand": "npm install && npm run build",
+  "postCreateCommand": "npm install && npm run build && npm run setup",
   "forwardPorts": [3055],
   "portsAttributes": {
     "3055": {

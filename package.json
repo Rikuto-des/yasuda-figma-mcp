@@ -9,8 +9,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "setup": "node scripts/setup.mjs",
     "bridge": "node --env-file-if-exists=.env dist/bridge.js",
-    "mcp": "node dist/mcp.js",
+    "tunnel": "bash scripts/tunnel.sh",
+    "mcp": "node --env-file-if-exists=.env dist/mcp.js",
     "dev:bridge": "tsx watch src/bridge.ts",
     "dev:mcp": "tsx src/mcp.ts",
     "token": "node -e \"import('node:crypto').then(c=>console.log(c.randomBytes(32).toString('hex')))\""

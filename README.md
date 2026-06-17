@@ -1,164 +1,128 @@
 # figma-secure-screenshot
 
-公式 Figma MCP の **read 系ツール相当**を、**公開 S3 を一切経由せず**に提供する自前 MCP サーバーです。
-GitHub Codespaces 内で動かし、**GitHub Copilot(agent mode)** から利用することを想定しています。
+A self-hosted, **read-only Figma MCP server** for **GitHub Copilot** (agent mode) in **GitHub Codespaces**.
+It renders screenshots **locally inside your running Figma app** — exactly like right-click → **Copy as PNG** —
+and **never uploads anything to a public S3 URL**.
 
-> **実機検証済み (2026-06-17):** 実 Codespace 上で bridge + MCP を起動し、Copilot が 9 ツールを認識
-> (`Discovered 9 tools`)。`gh codespace ports forward` のプライベートトンネル(公開ポートなし)経由で
-> 実 Figma プラグインと接続し、`get_screenshot`(6576×4000 級の実フレームをローカル描画、S3 不使用)、
-> `get_metadata` / `get_design_context` / `get_variable_defs` / `search_design_system` / `get_document_info`
-> が実データで成功。`whoami` / `libraries` は Figma の `permissions`(`currentuser` / `teamlibrary`)宣言が必要なため manifest に追加済み。
+> **Why this exists.** The official Figma MCP / REST image endpoints return rendered images on a
+> **public, unauthenticated S3 URL** (`figma-alpha-api.s3...`, valid up to 30 days). Anyone with the URL can
+> view your design. For security-sensitive orgs that's a non-starter. This server avoids it entirely: image
+> bytes are produced by the Figma client's local `exportAsync` and streamed straight to Copilot — no S3, no
+> Figma REST, no API token, **no outbound HTTP at all**.
 
-## なぜ作るか
+> **Verified on real hardware (2026-06-17):** real Codespace + real Figma desktop. Copilot discovered all
+> 9 tools; `get_screenshot` rendered a 6576×3952 frame and a FigJam board locally (no S3); every tool returned
+> real data over a **private `gh codespace ports forward` tunnel with no public port**.
 
-公式 Figma MCP / REST API の画像取得は、レンダリング結果を
-`figma-alpha-api.s3.us-west-2.amazonaws.com` 上の **公開・無認証・最大30日有効** な
-オブジェクトとして返します。URL を知っていれば誰でも画像を閲覧でき、機密デザインの
-漏洩リスクになります。
-
-このプロジェクトは、Figma の右クリック **「Copy as PNG」と同じローカル描画**
-(`node.exportAsync`)を使います。画像バイトは**あなたの Figma アプリ内で生成**され、
-S3 にも外部サービスにも上がりません。メタデータ・変数・デザインコンテキストなどの
-read 系も、すべて Figma プラグイン API でローカル取得します。
-
-## アーキテクチャ
+## How it works
 
 ```
-ローカルPC                                         Codespace
-┌──────────────────┐   gh の認証トンネル          ┌───────────────────────┐
-│ Figma プラグイン │   (公開なし・GitHub 認証)    │ ブリッジ :3055         │
-│ exportAsync()→   │   ws://localhost:3055        │   ↑                   │
-│ ローカル描画      │ ════════════════════════════>│ MCP(ws://127.0.0.1)→  │
-│ (S3 なし)        │                              │   stdio → Copilot     │
-└──────────────────┘                              └───────────────────────┘
+ your laptop                                    your Codespace
+┌────────────────────┐   private gh tunnel     ┌──────────────────────────┐
+│ Figma desktop app  │   (GitHub-authed,       │ bridge  (:3055)          │
+│  └ plugin ─ ws://localhost:3055 ════════════► │   ▲                      │
+│                    │   no public port)       │ MCP ─stdio─► Copilot      │
+└────────────────────┘                         └──────────────────────────┘
+   exportAsync() renders locally → bytes never leave this path
 ```
 
-**公開ポートは使いません。** `gh codespace ports forward 3055:3055` が Codespace の 3055 番を
-あなたのローカルの `localhost:3055` に**プライベート(GitHub 認証)**で繋ぎます。
-プラグインは `ws://localhost:3055` に接続するだけ。外部に晒される URL は存在しません。
+- **bridge** (`src/bridge.ts`) — a token-authenticated WebSocket relay that pairs the plugin with the MCP server. Forwards messages; persists nothing.
+- **mcp** (`src/mcp.ts`) — the stdio MCP server Copilot launches. Exposes the read tools; talks only to the bridge over localhost.
+- **plugin** (`plugin/`) — runs in your Figma app, executes each read op against the **currently open file**, and returns data/bytes.
 
-- **bridge**（`src/bridge.ts`）: プラグインと MCP を仲介する WebSocket リレー。トークン認証のみ行い、ペイロードは保存せず素通し。
-- **mcp**（`src/mcp.ts`）: stdio で Copilot に繋がる MCP サーバー。read 系ツールを公開し、各操作をブリッジ経由でプラグインに依頼。
-- **plugin**（`plugin/`）: Figma 内で動き、ローカルで描画・データ取得して返す。
+The plugin reaches the Codespace bridge through `gh codespace ports forward` — a **private, GitHub-authenticated tunnel to your own `localhost`**. No port is ever made public.
 
-## 提供ツール（公式 read 系との対応）
+## Tools (9, all read-only, all local)
 
-| ツール | 内容 | 公式相当 |
+| Tool | Returns | Figma API used (all local) |
 |---|---|---|
-| `figma_get_screenshot` | 選択 or 指定ノードを PNG/JPG でローカル描画（Copy as PNG 相当）。画像はインライン返却 | `get_screenshot` |
-| `figma_get_metadata` | ノードツリーの軽量版（id/name/type/座標/サイズ） | `get_metadata` |
-| `figma_get_design_context` | 実装用の深い直列化（レイアウト/スタイル/タイポ/テキスト/コンポーネント/束縛変数） | `get_design_context` |
-| `figma_get_variable_defs` | デザイントークン変数（モード別の値つき）と所属コレクション | `get_variable_defs` |
-| `figma_search_design_system` | コンポーネント/スタイルを名前で検索 | `search_design_system` |
-| `figma_get_libraries` | 利用可能なチームライブラリ変数コレクション（※制約あり） | `get_libraries` |
-| `figma_get_figjam` | FigJam ボードの直列化 | `get_figjam` |
-| `figma_get_document_info` | ファイル/ページ/選択状況 | （補助） |
-| `figma_whoami` | 現在の Figma ユーザーと開いているファイル | `whoami` |
+| `figma_get_screenshot` | PNG/JPG of selection or a node (Copy-as-PNG, inline, no S3) | `node.exportAsync` |
+| `figma_get_metadata` | compact node tree (id/name/type/geometry) | tree traversal |
+| `figma_get_design_context` | layout, styles, typography, components, bound variables | node props + `getMainComponentAsync` |
+| `figma_get_variable_defs` | design-token variables + collections (per-mode values) | `variables.*` |
+| `figma_search_design_system` | local components / styles by name | `findAllWithCriteria`, `getLocal*StylesAsync` |
+| `figma_get_libraries` | available team-library variable collections | `teamLibrary.*` |
+| `figma_get_figjam` | FigJam board (sticky notes, shapes, connectors, text) | tree traversal |
+| `figma_get_document_info` | file / pages / current page / selection summary | `figma.root`, `figma.currentPage` |
+| `figma_whoami` | current Figma user + open file | `figma.currentUser` |
 
-### 制約（正直な注記）
+If you don't pass `url`/`nodeId`, the tool operates on your **current selection** in Figma.
 
-- **`figma_get_design_context`** は Figma のコード生成そのものを再現するのではなく、**LLM がコード化するための生のデザインデータ**を返します。Copilot 側でコードを生成してください。
-- **`figma_get_libraries`** はプラグイン API の制約で、チームライブラリの **変数コレクション**しか列挙できません。コンポーネントライブラリの完全な列挙は不可。
-- **Code Connect** は本プロジェクトの対象外です。完全なマッピングは Figma のクラウドサービス側にあり、プラグイン API からは取得できないため、ツールとしては提供していません。
+## Quick start (per developer)
 
-## セットアップ
+1. **Open a Codespace** on this repo (Code → Codespaces → Create). The devcontainer runs `npm install && npm run build && npm run setup`, which **auto-generates your personal token** and writes `.env`.
+2. **Start the bridge** in the Codespace terminal:
+   ```bash
+   npm run bridge        # prints: [bridge] listening on 0.0.0.0:3055
+   ```
+3. **Open the tunnel** on your **local** machine (needs the `gh` CLI with the `codespace` scope — run `gh auth refresh -s codespace` once):
+   ```bash
+   gh codespace ports forward 3055:3055 -c <your-codespace-name>
+   # (with a local clone you can just run:  npm run tunnel )
+   ```
+4. **Run the plugin** in the **Figma desktop app** (see install options below) → paste your token → **Connect** (the token is printed by `npm run setup`; re-run it or `grep BRIDGE_TOKEN .env` to see it again).
+5. **Use Copilot** (agent mode). It auto-starts the MCP server and discovers the 9 tools — no token prompt. Try: *"screenshot my current Figma selection"*.
 
-### 1. 依存インストールとビルド
+### 2nd time onward (resume)
 
-```bash
-npm install
-npm run build
-```
+Codespaces auto-stop when idle. To resume: reopen the Codespace → `npm run bridge` → tunnel → run the plugin → Connect. Your token persists in `.env`.
 
-### 2. トークンを生成して `.env` を用意
+## Getting the plugin
 
-```bash
-cp .env.example .env
-npm run token   # 出力された値を .env の BRIDGE_TOKEN に貼る
-```
+**Recommended — publish it once as an org-internal plugin** (Figma Organization/Enterprise):
 
-`BRIDGE_TOKEN` はブリッジ・MCP・プラグインで**同じ値**を使います。パスワード相当として扱ってください。
+1. In Figma desktop: **Plugins → Development → Import plugin from manifest…** → select `plugin/manifest.json` (one admin does this).
+2. **Plugins → Development → Manage plugins in development →** *Secure Screenshot Bridge* → **Publish**.
+3. Set visibility to **"Only available to your organization"**, add a name/description, and upload an icon (use `plugin/icon.svg`, exported to a 128×128 PNG). Publish.
+4. Members now run it from **Plugins → (your org's plugins)** — no manifest import needed. To ship changes, re-publish.
 
-### 3. Codespace でブリッジを起動
+**Fallback — manifest import (any Figma plan):** each developer imports `plugin/manifest.json` via *Plugins → Development → Import plugin from manifest…* (requires Figma desktop; the browser app can't import dev plugins).
 
-```bash
-npm run bridge   # Codespace 内で :3055 を待ち受け
-```
+## Token (per user) — `.env` or Codespaces secret
 
-### 3-2. ローカルからプライベートトンネルを張る（公開なし）
+The token is auto-generated **per user**. Both paths are supported and need no Copilot prompt (the MCP reads it from the environment):
 
-**自分のローカル PC のターミナル**で、Codespace の 3055 番を localhost に転送します:
+- **`.env` (default):** `npm run setup` generates a token and writes `.env` (gitignored). `npm run bridge` and the MCP both load it via `--env-file-if-exists`.
+- **Codespaces secret:** set a user secret named **`BRIDGE_TOKEN`** (GitHub → Settings → Codespaces → Secrets, scoped to this repo, or `gh secret set BRIDGE_TOKEN --user`). `npm run setup` detects it and leaves `.env` untouched; the bridge and MCP read it from the environment.
 
-```bash
-gh codespace ports forward 3055:3055 -c <CODESPACE_NAME>
-# 一覧は: gh codespace list
-```
+Either way, paste the same value into the Figma plugin once (`npm run setup` prints it). Rotate anytime: `rm .env && npm run setup`.
 
-これは GitHub 認証済みの**プライベート**トンネルで、公開 URL は作られません。
-これでローカルの `ws://localhost:3055` が Codespace のブリッジに繋がります。
-（このコマンドは Figma を使う間つけっぱなしにします。）
+## Security model
 
-### 4. Copilot に MCP を登録
+- **No public port.** The bridge is reachable only through the private, GitHub-authenticated `gh` tunnel to your own `localhost`. Nothing is exposed to the internet.
+- **No S3, no Figma REST, no token, no outbound HTTP.** Images come from the local `exportAsync`; all other data from the Figma plugin API. (`grep` the repo: there is no `fetch`, no `api.figma.com`, no `/v1/images`.)
+- **Defense in depth.** Private tunnel (who can reach the port) + per-user `BRIDGE_TOKEN` (who can join the channel) + plugin `networkAccess` restricted to `ws://localhost:3055`. The bridge persists nothing.
+- Stop the tunnel (or the Codespace) and the path disappears.
 
-`.vscode/mcp.json` を同梱済みです。VS Code（Codespaces）の Copilot agent mode が
-`dist/mcp.js` を stdio で起動し、`ws://127.0.0.1:3055`（同一 Codespace 内）でブリッジに繋ぎます。
-起動時に `BRIDGE_TOKEN` を聞かれるので、`.env` と同じ値を入力してください。
+## Limitations (honest)
 
-> MCP サーバー自身は公開ポートに触れません。公開転送を越えるのは「プラグイン↔ブリッジ」の一区間だけです。
+- **Only the file you currently have open** in Figma — the plugin can't reach files you aren't viewing (the official MCP/REST can fetch any file by key).
+- **`get_design_context` returns raw design data**, not Figma's opinionated code generation — your model writes the code.
+- **`get_libraries`** sees only team-library *variable* collections (plugin-API limit), not full component-library enumeration.
+- **Code Connect is out of scope** (not reachable from the plugin API).
 
-### 5. Figma にプラグインを読み込んで接続
+## Scripts
 
-1. Figma デスクトップ → メニュー → Plugins → Development → **Import plugin from manifest…**
-2. `plugin/manifest.json` を選択。
-3. 対象ファイルを開いた状態でプラグインを実行。
-4. UI の **Bridge URL** は既定の `ws://localhost:3055` のまま、**Token / Channel** を入力し **Connect**。
-5. ステータスが **Ready** になり、Copilot 側のツールが使えるようになります。
-
-## 使い方の例（Copilot）
-
-- レイヤーを選択して: 「選択中の Figma ノードのスクリーンショットを取って」
-- 「この Figma URL のデザインコンテキストを取得して実装して」（URL の `node-id` を自動解決）
-- 「このコンポーネントが使っているデザイントークン変数を一覧して」
-
-`url` か `nodeId` を渡さない場合は **Figma の現在の選択**が対象になります（Copy as PNG と同じ感覚）。
-
-## 2回目以降の起動（resume）
-
-初回セットアップ済みなら、毎回これだけ:
-
-1. **Codespace を再開**（アイドルで自動停止します。github.com/codespaces から開くか `gh codespace ssh` で再開）
-2. Codespace のターミナルで `npm run bridge`（`.env` を自動ロード）
-3. ローカル端末で `gh codespace ports forward 3055:3055 -c <Codespace名>`（開いたまま）
-4. Figma でプラグイン **Secure Screenshot Bridge** を実行 → **Connect**
-5. Copilot は MCP を自動起動（初回のみトークン入力）
-
-> Codespace のアイドル自動停止が煩わしい場合は、作成時に `gh codespace create --idle-timeout 90m` 等で延長できます。
-
-## セキュリティモデル
-
-- **公開ポートなし。** ブリッジは Codespace 内に閉じ、`gh codespace ports forward` の
-  **GitHub 認証済みプライベートトンネル**経由でしか到達できません。インターネットに晒される
-  URL は一切作りません。
-- **画像は S3 に上がらない。** `figma_get_screenshot` は Figma クライアント内の `exportAsync`
-  （= Copy as PNG）でローカル描画し、バイト列を直接返します。Figma の公開 S3 は経由しません。
-- **多層防御:** プライベートトンネル（GitHub 認証）＋ 共有トークン（チャンネル参加に必須）＋
-  loopback のみ（`networkAccess` は localhost に限定）。ペイロードはブリッジを素通りするだけで永続化しません。
-- トークンが漏れたら `npm run token` で再生成し、ブリッジ・MCP・プラグインの3者を更新します。
-- 使わないときはトンネル（`gh ... forward`）を止めれば、ローカルからの到達経路も消えます。
-
-## スクリプト
-
-| コマンド | 説明 |
+| Command | What it does |
 |---|---|
-| `npm run build` | TypeScript をビルド |
-| `npm run bridge` | ブリッジ起動（要 `BRIDGE_TOKEN`） |
-| `npm run mcp` | MCP を手動起動（通常は Copilot が自動起動） |
-| `npm run dev:bridge` | tsx でブリッジをホットリロード |
-| `npm run token` | ランダムトークン生成 |
+| `npm run setup` | Generate/reuse your token (`.env` or Codespaces secret), print it |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run bridge` | Start the bridge (loads `.env` automatically) |
+| `npm run tunnel` | Open the private tunnel from your local machine (auto-detects the Codespace) |
+| `npm run mcp` | Run the MCP manually (Copilot normally launches it) |
 
-## トラブルシュート
+## Troubleshooting
 
-- **「Figma plugin is not connected」**: プラグインの UI で Connect 済みか、URL/Token/Channel が一致するか確認。
-- **「Bridge is not connected」**: Codespace で `npm run bridge` が起動しているか、`BRIDGE_URL`（既定 `ws://127.0.0.1:3055`）が合っているか確認。
-- **プラグインが繋がらない**: ローカルで `gh codespace ports forward 3055:3055` が動いているか、プラグインの URL が `ws://localhost:3055` か、トークン/チャンネルが一致しているか確認。トンネルが切れたら張り直す。
-- **画像が Copilot に表示されない**: Copilot のモデルが画像（vision）対応か確認。`saveToFile: true` で Codespace 内にも保存できます（S3 不使用）。
+- **"Figma plugin is not connected"** — run the plugin and Connect; check the token/URL/channel match. The bridge log should show `plugin joined`.
+- **"Bridge is not connected"** — `npm run bridge` running in the Codespace? `BRIDGE_TOKEN` set (`npm run setup`)?
+- **Plugin won't connect** — is `gh codespace ports forward 3055:3055` running locally? Plugin URL `ws://localhost:3055`? Tunnel dropped → restart it.
+- **Plugin flapping (join/leave loop)** — you have two plugin instances open (e.g. two files). Keep only one running.
+- **Image not shown in Copilot** — use a vision-capable model. `figma_get_screenshot` also accepts `saveToFile: true` to write the PNG into the Codespace (still no S3).
+
+## Contributing
+
+Issues and PRs welcome. The bridge/MCP are tiny TypeScript (`src/`), the plugin is plain JS (`plugin/`). `npm run build` must pass.
+
+## License
+
+[MIT](LICENSE) © 2026 Rikuto Yasuda
