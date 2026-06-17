@@ -6,7 +6,7 @@
   "ui": "ui.html",
   "editorType": ["figma", "figjam", "dev"],
   "networkAccess": {
-    "allowedDomains": ["ws://localhost:3055", "ws://127.0.0.1:3055"],
+    "allowedDomains": ["ws://localhost:3055"],
     "reasoning": "Connects only to a loopback WebSocket bridge reached through a private, GitHub-authenticated `gh codespace ports forward` tunnel. No public endpoint and no third-party services."
   }
 }
