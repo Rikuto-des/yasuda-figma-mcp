@@ -1,5 +1,7 @@
 # yasuda-figma-mcp
 
+**English** | [日本語](README.ja.md)
+
 A self-hosted, **read-only Figma MCP server** for **GitHub Copilot** (agent mode) in **GitHub Codespaces**.
 It renders screenshots **locally inside your running Figma app** — exactly like right-click → **Copy as PNG** —
 and **never uploads anything to a public S3 URL**.
