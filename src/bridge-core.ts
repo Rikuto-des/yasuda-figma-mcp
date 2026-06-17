@@ -50,9 +50,9 @@ export function startBridgeServer(opts: BridgeOptions): WebSocketServer {
     let role: "mcp" | "plugin" | null = null;
     let channelId: string | null = null;
 
-    let alive = true;
+    let missed = 0;
     ws.on("pong", () => {
-      alive = true;
+      missed = 0;
     });
 
     ws.on("message", (raw) => {
@@ -107,6 +107,13 @@ export function startBridgeServer(opts: BridgeOptions): WebSocketServer {
         return;
       }
 
+      // App-level keepalive: clients send this to keep the tunnel warm. Echo it
+      // back, but never relay it to the peer.
+      if (msg.type === "keepalive") {
+        send(ws, { type: "keepalive" });
+        return;
+      }
+
       const ch = channelId ? channels.get(channelId) : undefined;
       if (!ch || !role) return;
       const peerRole = role === "mcp" ? "plugin" : "mcp";
@@ -144,14 +151,17 @@ export function startBridgeServer(opts: BridgeOptions): WebSocketServer {
     });
 
     const heartbeat = setInterval(() => {
-      if (!alive) {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      // Tolerate one missed pong (a brief tunnel stall) before giving up.
+      // Two strikes (~50s) keeps the plugin connected through transient blips.
+      if (missed >= 2) {
         ws.terminate();
         clearInterval(heartbeat);
         return;
       }
-      alive = false;
-      if (ws.readyState === WebSocket.OPEN) ws.ping();
-    }, 30_000);
+      missed++;
+      ws.ping();
+    }, 25_000);
 
     ws.on("close", () => clearInterval(heartbeat));
   });

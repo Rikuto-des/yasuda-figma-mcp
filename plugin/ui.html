@@ -125,6 +125,7 @@
       var ws = null;
       var reconnectOnClose = false;
       var mcpPeer = false;
+      var kaTimer = null;
 
       function $(id) {
         return document.getElementById(id);
@@ -197,6 +198,11 @@
           ws.send(JSON.stringify({ type: "join", role: "plugin", channel: channel, token: token }));
           setStatus("Joining…", "");
           setConnected(true);
+          // Keep the gh tunnel warm — without periodic traffic it drops idle sockets.
+          if (kaTimer) clearInterval(kaTimer);
+          kaTimer = setInterval(function () {
+            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "keepalive" }));
+          }, 20000);
         };
 
         ws.onmessage = function (e) {
@@ -234,6 +240,7 @@
         ws.onclose = function (ev) {
           setConnected(false);
           mcpPeer = false;
+          if (kaTimer) { clearInterval(kaTimer); kaTimer = null; }
           // Replaced by a newer instance (e.g. you opened the plugin in another
           // file). Stay idle instead of fighting over the channel.
           if (ev && ev.code === 4002) {
