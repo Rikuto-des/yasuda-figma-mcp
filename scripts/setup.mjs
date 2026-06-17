@@ -40,7 +40,7 @@ if (!fromSecret) {
 
 const line = "─".repeat(64);
 console.log(`\n${line}`);
-console.log("  figma-secure-screenshot — token setup");
+console.log("  yasuda-figma-mcp — token setup");
 console.log(line);
 console.log(`  Source : ${source}`);
 console.log(`  .env   : ${wroteEnv ? "written (gitignored)" : "skipped — using the secret/env value"}`);
@@ -49,6 +49,6 @@ console.log(`      ${token}\n`);
 console.log("  Next steps:");
 console.log("   1) npm run bridge                         # start the bridge (in this Codespace)");
 console.log("   2) on your LOCAL machine:  npm run tunnel  # private tunnel, no public port");
-console.log('   3) in Figma: run "Secure Screenshot Bridge", paste the token, Connect');
+console.log('   3) in Figma: run "Yasuda Figma MCP", paste the token, Connect');
 console.log(`\n  Rotate the token anytime:  rm .env && npm run setup`);
 console.log(`${line}\n`);

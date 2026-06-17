@@ -1,6 +1,6 @@
 {
-  "name": "Secure Screenshot Bridge",
-  "id": "secure-screenshot-bridge",
+  "name": "Yasuda Figma MCP",
+  "id": "yasuda-figma-mcp",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",

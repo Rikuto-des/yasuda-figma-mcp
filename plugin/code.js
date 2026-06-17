@@ -1,5 +1,5 @@
 /**
- * Secure Screenshot Bridge — Figma plugin (main thread).
+ * Yasuda Figma MCP — Figma plugin (main thread).
  *
  * This sandbox has the Figma document APIs but NO network access. It receives
  * read-only operations from ui.html (which holds the WebSocket to the bridge),

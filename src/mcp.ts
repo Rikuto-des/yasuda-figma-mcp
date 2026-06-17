@@ -135,7 +135,7 @@ class BridgeClient {
       if (!this.pluginConnected) {
         reject(
           new Error(
-            "Figma plugin is not connected. In Figma, run the 'Secure Screenshot Bridge' plugin and press Connect.",
+            "Figma plugin is not connected. In Figma, run the 'Yasuda Figma MCP' plugin and press Connect.",
           ),
         );
         return;
@@ -196,11 +196,11 @@ function errorResult(err: unknown): CallToolResult {
 // MCP server + tools
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "figma-secure-screenshot", version: "0.1.0" });
+const server = new McpServer({ name: "yasuda-figma-mcp", version: "0.1.0" });
 
 // 1) Screenshot — local render, equivalent to right-click "Copy as PNG".
 server.registerTool(
-  "figma_get_screenshot",
+  "yfigma_get_screenshot",
   {
     title: "Get Figma screenshot (local render)",
     description:
@@ -255,7 +255,7 @@ server.registerTool(
 
 // 2) Metadata — compact node tree (ids, names, types, geometry).
 server.registerTool(
-  "figma_get_metadata",
+  "yfigma_get_metadata",
   {
     title: "Get Figma metadata",
     description:
@@ -280,7 +280,7 @@ server.registerTool(
 
 // 3) Design context — deep serialization for code generation.
 server.registerTool(
-  "figma_get_design_context",
+  "yfigma_get_design_context",
   {
     title: "Get Figma design context",
     description:
@@ -305,7 +305,7 @@ server.registerTool(
 
 // 4) Variable definitions — design tokens used by a node, or all local variables.
 server.registerTool(
-  "figma_get_variable_defs",
+  "yfigma_get_variable_defs",
   {
     title: "Get Figma variable definitions",
     description:
@@ -333,7 +333,7 @@ server.registerTool(
 
 // 5) Search design system — local + published components and styles by name.
 server.registerTool(
-  "figma_search_design_system",
+  "yfigma_search_design_system",
   {
     title: "Search Figma design system",
     description:
@@ -365,7 +365,7 @@ server.registerTool(
 
 // 6) Libraries — available team-library variable collections (plugin API limits noted).
 server.registerTool(
-  "figma_get_libraries",
+  "yfigma_get_libraries",
   {
     title: "Get Figma libraries",
     description:
@@ -384,7 +384,7 @@ server.registerTool(
 
 // 7) FigJam — serialize a FigJam board.
 server.registerTool(
-  "figma_get_figjam",
+  "yfigma_get_figjam",
   {
     title: "Get FigJam content",
     description:
@@ -405,7 +405,7 @@ server.registerTool(
 
 // 8) Document info — file, pages, current page, selection summary.
 server.registerTool(
-  "figma_get_document_info",
+  "yfigma_get_document_info",
   {
     title: "Get Figma document info",
     description:
@@ -424,7 +424,7 @@ server.registerTool(
 
 // 9) Whoami — current Figma user + open file context.
 server.registerTool(
-  "figma_whoami",
+  "yfigma_whoami",
   {
     title: "Get current Figma user",
     description:
@@ -458,7 +458,7 @@ async function main(): Promise<void> {
   bridge.start();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[mcp] figma-secure-screenshot ready (stdio). Bridge:", BRIDGE_URL, "channel:", CHANNEL);
+  console.error("[mcp] yasuda-figma-mcp ready (stdio). Bridge:", BRIDGE_URL, "channel:", CHANNEL);
 }
 
 main().catch((err) => {

@@ -1,5 +1,5 @@
 {
-  "name": "figma-secure-screenshot",
+  "name": "yasuda-figma-mcp",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
   "features": {
     "ghcr.io/devcontainers/features/sshd:1": {}

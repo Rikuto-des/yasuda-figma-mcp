@@ -1,6 +1,6 @@
 {
   "servers": {
-    "figma-secure-screenshot": {
+    "yasuda-figma-mcp": {
       "type": "stdio",
       "command": "node",
       "args": ["--env-file-if-exists=${workspaceFolder}/.env", "${workspaceFolder}/dist/mcp.js"],

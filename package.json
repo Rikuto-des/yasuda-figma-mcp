@@ -1,5 +1,5 @@
 {
-  "name": "figma-secure-screenshot",
+  "name": "yasuda-figma-mcp",
   "version": "0.2.0",
   "type": "module",
   "description": "Secure, read-only Figma MCP for GitHub Copilot. Renders locally in the running Figma app (like Copy as PNG) and never uploads to any public S3 URL.",
@@ -7,10 +7,10 @@
   "author": "Rikuto Yasuda",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Rikuto-des/figma-secure-screenshot.git"
+    "url": "https://github.com/Rikuto-des/yasuda-figma-mcp.git"
   },
   "bin": {
-    "figma-secure-screenshot": "dist/cli.js"
+    "yasuda-figma-mcp": "dist/cli.js"
   },
   "files": [
     "dist",

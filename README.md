@@ -1,4 +1,4 @@
-# figma-secure-screenshot
+# yasuda-figma-mcp
 
 A self-hosted, **read-only Figma MCP server** for **GitHub Copilot** (agent mode) in **GitHub Codespaces**.
 It renders screenshots **locally inside your running Figma app** — exactly like right-click → **Copy as PNG** —
@@ -36,15 +36,15 @@ The plugin reaches the Codespace bridge through `gh codespace ports forward` —
 
 | Tool | Returns | Figma API used (all local) |
 |---|---|---|
-| `figma_get_screenshot` | PNG/JPG of selection or a node (Copy-as-PNG, inline, no S3) | `node.exportAsync` |
-| `figma_get_metadata` | compact node tree (id/name/type/geometry) | tree traversal |
-| `figma_get_design_context` | layout, styles, typography, components, bound variables | node props + `getMainComponentAsync` |
-| `figma_get_variable_defs` | design-token variables + collections (per-mode values) | `variables.*` |
-| `figma_search_design_system` | local components / styles by name | `findAllWithCriteria`, `getLocal*StylesAsync` |
-| `figma_get_libraries` | available team-library variable collections | `teamLibrary.*` |
-| `figma_get_figjam` | FigJam board (sticky notes, shapes, connectors, text) | tree traversal |
-| `figma_get_document_info` | file / pages / current page / selection summary | `figma.root`, `figma.currentPage` |
-| `figma_whoami` | current Figma user + open file | `figma.currentUser` |
+| `yfigma_get_screenshot` | PNG/JPG of selection or a node (Copy-as-PNG, inline, no S3) | `node.exportAsync` |
+| `yfigma_get_metadata` | compact node tree (id/name/type/geometry) | tree traversal |
+| `yfigma_get_design_context` | layout, styles, typography, components, bound variables | node props + `getMainComponentAsync` |
+| `yfigma_get_variable_defs` | design-token variables + collections (per-mode values) | `variables.*` |
+| `yfigma_search_design_system` | local components / styles by name | `findAllWithCriteria`, `getLocal*StylesAsync` |
+| `yfigma_get_libraries` | available team-library variable collections | `teamLibrary.*` |
+| `yfigma_get_figjam` | FigJam board (sticky notes, shapes, connectors, text) | tree traversal |
+| `yfigma_get_document_info` | file / pages / current page / selection summary | `figma.root`, `figma.currentPage` |
+| `yfigma_whoami` | current Figma user + open file | `figma.currentUser` |
 
 If you don't pass `url`/`nodeId`, the tool operates on your **current selection** in Figma.
 
@@ -55,9 +55,9 @@ Add this **once** to your VS Code **user** MCP config (Command Palette → **"MC
 ```json
 {
   "servers": {
-    "figma-secure-screenshot": {
+    "yasuda-figma-mcp": {
       "command": "npx",
-      "args": ["-y", "github:Rikuto-des/figma-secure-screenshot", "mcp"],
+      "args": ["-y", "github:Rikuto-des/yasuda-figma-mcp", "mcp"],
       "env": {
         "BRIDGE_EMBED": "1",
         "BRIDGE_PORT": "3055",
@@ -77,7 +77,7 @@ Add this **once** to your VS Code **user** MCP config (Command Palette → **"MC
 
 ```bash
 # on your LOCAL machine, pointed at that project's Codespace:
-npx -y github:Rikuto-des/figma-secure-screenshot tunnel
+npx -y github:Rikuto-des/yasuda-figma-mcp tunnel
 # or:  gh codespace ports forward 3055:3055 -c <codespace-name>
 ```
 
@@ -107,7 +107,7 @@ Codespaces auto-stop when idle. To resume: reopen the Codespace → `npm run bri
 **Recommended — publish it once as an org-internal plugin** (Figma Organization/Enterprise):
 
 1. In Figma desktop: **Plugins → Development → Import plugin from manifest…** → select `plugin/manifest.json` (one admin does this).
-2. **Plugins → Development → Manage plugins in development →** *Secure Screenshot Bridge* → **Publish**.
+2. **Plugins → Development → Manage plugins in development →** *Yasuda Figma MCP* → **Publish**.
 3. Set visibility to **"Only available to your organization"**, add a name/description, and upload an icon (use `plugin/icon.svg`, exported to a 128×128 PNG). Publish.
 4. Members now run it from **Plugins → (your org's plugins)** — no manifest import needed. To ship changes, re-publish.
 
@@ -152,7 +152,7 @@ Either way, paste the same value into the Figma plugin once (`npm run setup` pri
 - **"Bridge is not connected"** — `npm run bridge` running in the Codespace? `BRIDGE_TOKEN` set (`npm run setup`)?
 - **Plugin won't connect** — is `gh codespace ports forward 3055:3055` running locally? Plugin URL `ws://localhost:3055`? Tunnel dropped → restart it.
 - **Plugin flapping (join/leave loop)** — you have two plugin instances open (e.g. two files). Keep only one running.
-- **Image not shown in Copilot** — use a vision-capable model. `figma_get_screenshot` also accepts `saveToFile: true` to write the PNG into the Codespace (still no S3).
+- **Image not shown in Copilot** — use a vision-capable model. `yfigma_get_screenshot` also accepts `saveToFile: true` to write the PNG into the Codespace (still no S3).
 
 ## Contributing
 

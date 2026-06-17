@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI entry so the package can be run from anywhere via npx, e.g.
- *   npx -y github:Rikuto-des/figma-secure-screenshot mcp
+ *   npx -y github:Rikuto-des/yasuda-figma-mcp mcp
  *
  * Subcommands:
  *   mcp     Run the MCP server (stdio). BRIDGE_EMBED=1 also hosts the bridge.
@@ -15,13 +15,13 @@ import { fileURLToPath } from "node:url";
 function usage(): void {
   console.error(
     [
-      "figma-secure-screenshot — secure, read-only Figma MCP (local render, no public S3)",
+      "yasuda-figma-mcp — secure, read-only Figma MCP (local render, no public S3)",
       "",
       "Usage:",
-      "  figma-secure-screenshot mcp      Run the MCP server (stdio). Set BRIDGE_EMBED=1 to also host the bridge.",
-      "  figma-secure-screenshot bridge   Run the standalone bridge relay.",
-      "  figma-secure-screenshot tunnel   Private tunnel local:3055 -> your Codespace (uses gh).",
-      "  figma-secure-screenshot setup    Generate / print your per-user BRIDGE_TOKEN.",
+      "  yasuda-figma-mcp mcp      Run the MCP server (stdio). Set BRIDGE_EMBED=1 to also host the bridge.",
+      "  yasuda-figma-mcp bridge   Run the standalone bridge relay.",
+      "  yasuda-figma-mcp tunnel   Private tunnel local:3055 -> your Codespace (uses gh).",
+      "  yasuda-figma-mcp setup    Generate / print your per-user BRIDGE_TOKEN.",
       "",
       "Env: BRIDGE_TOKEN (required for mcp/bridge), BRIDGE_PORT=3055,",
       "     BRIDGE_URL=ws://127.0.0.1:3055, BRIDGE_CHANNEL=default, BRIDGE_EMBED=1",
