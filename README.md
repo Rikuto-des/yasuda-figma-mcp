@@ -52,9 +52,33 @@ The plugin reaches the Codespace bridge through `gh codespace ports forward` —
 
 If you don't pass `url`/`nodeId`, the tool operates on your **current selection** in Figma.
 
-## Use it in ANY project (npx — no clone, no build) ⭐ recommended
+## Setup ⭐ recommended (npx + Codespaces secret)
 
-Add this **once** to your VS Code **user** MCP config (Command Palette → **"MCP: Open User Configuration"**). It then works in **every** workspace and Codespace — zero per-project setup:
+No clone, no build, no per-project config. Do the **one-time setup** once; after that each project costs only **tunnel + Connect**.
+
+### One-time setup (per developer)
+
+**1 — Generate a token** (any random secret string; this gates the bridge channel):
+
+```bash
+openssl rand -hex 24
+# → copy the output, e.g. 7f3a9c4e…  (used in steps 2 and the plugin)
+```
+
+**2 — Register it as a Codespaces user secret** *(recommended — one value for all your Codespaces, nothing to manage per project)*:
+
+- GitHub → **Settings → Codespaces → Secrets** → **New secret**
+  - **Name:** `BRIDGE_TOKEN`
+  - **Value:** the token from step 1
+  - **Repository access:** the repos you'll use it in (or *All repositories*)
+- …or via CLI: `gh secret set BRIDGE_TOKEN --user --app codespaces` (paste the value when prompted)
+
+Every Codespace you open now has `$BRIDGE_TOKEN` injected automatically; the MCP and embedded bridge read it with **no prompt**.
+
+**3 — Add the MCP server to your VS Code *user* config** (once; applies to every workspace and Codespace):
+
+- Command Palette → **"MCP: Open User Configuration"**
+- paste this and save:
 
 ```json
 {
@@ -73,19 +97,34 @@ Add this **once** to your VS Code **user** MCP config (Command Palette → **"MC
 }
 ```
 
-- **`BRIDGE_EMBED=1`** makes the MCP **host the bridge in-process** — there is no separate bridge to start.
-- **Token, set once:** add a **Codespaces user secret** named `BRIDGE_TOKEN` (GitHub → Settings → Codespaces → Secrets, granted to the repos you use). Every Codespace then inherits it. (Local VS Code instead: put `"BRIDGE_TOKEN": "<your-token>"` in the `env` block above.) Generate a value with `openssl rand -hex 24`.
-- First launch in a fresh Codespace builds the package once (~30–60s, cached afterward).
+`BRIDGE_EMBED=1` makes the MCP **host the bridge in-process**, so there's no separate bridge to start. (Local VS Code, no Codespaces secret? Add `"BRIDGE_TOKEN": "<your-token>"` to this `env` block instead.)
 
-**Per session** (any project): open its Codespace → start the tunnel locally → run the Figma plugin and Connect:
+**4 — Give the local `gh` CLI the `codespace` scope** (needed for the tunnel; once):
 
 ```bash
-# on your LOCAL machine, pointed at that project's Codespace:
+gh auth refresh -h github.com -s codespace
+```
+
+**5 — Get the Figma plugin** (once) — see [Getting the plugin](#getting-the-plugin). Recommended: publish it **org-internal** so it shows up in everyone's plugin list with no manifest import.
+
+### Per session (each project, each time)
+
+**1 — Open the project's Codespace.** Copilot auto-launches the MCP, and the embedded bridge starts with it. The first launch in a fresh Codespace builds the package once (~30–60 s, cached afterward).
+
+**2 — Open the private tunnel on your local machine** and leave it running:
+
+```bash
 npx -y github:Rikuto-des/yasuda-figma-mcp tunnel
 # or:  gh codespace ports forward 3055:3055 -c <codespace-name>
 ```
 
-That's the whole per-project cost: **tunnel + plugin Connect**. Copilot already has the tools (user config) and the token (user secret), and the bridge is embedded.
+**3 — Run the Figma plugin** ("Yasuda Figma MCP") → paste your token → **Connect** (status turns **Ready**).
+
+- To reveal the token inside the Codespace terminal: `echo "$BRIDGE_TOKEN"`.
+
+**4 — Use Copilot** (agent mode), e.g. *"screenshot my current Figma selection"*. The 9 `yfigma_*` tools are available.
+
+That's the whole per-project cost: **tunnel + plugin Connect**. Copilot already has the tools (user config), the token (user secret), and the bridge (embedded).
 
 ## Alternative: run from a clone of this repo
 
@@ -117,14 +156,14 @@ Codespaces auto-stop when idle. To resume: reopen the Codespace → `npm run bri
 
 **Fallback — manifest import (any Figma plan):** each developer imports `plugin/manifest.json` via *Plugins → Development → Import plugin from manifest…* (requires Figma desktop; the browser app can't import dev plugins).
 
-## Token (per user) — `.env` or Codespaces secret
+## Token (per user)
 
-The token is auto-generated **per user**. Both paths are supported and need no Copilot prompt (the MCP reads it from the environment):
+The token is a random secret that gates **who can join the bridge channel** (defense in depth on top of the private tunnel). Neither method needs a Copilot prompt — the MCP reads `BRIDGE_TOKEN` from the environment.
 
-- **`.env` (default):** `npm run setup` generates a token and writes `.env` (gitignored). `npm run bridge` and the MCP both load it via `--env-file-if-exists`.
-- **Codespaces secret:** set a user secret named **`BRIDGE_TOKEN`** (GitHub → Settings → Codespaces → Secrets, scoped to this repo, or `gh secret set BRIDGE_TOKEN --user`). `npm run setup` detects it and leaves `.env` untouched; the bridge and MCP read it from the environment.
+- **Codespaces user secret — recommended ✅** — one value, set once, inherited by **every** Codespace across all repos; nothing to manage per project. GitHub → **Settings → Codespaces → Secrets → `BRIDGE_TOKEN`** (or `gh secret set BRIDGE_TOKEN --user --app codespaces`). Reveal it in a Codespace with `echo "$BRIDGE_TOKEN"`.
+- **`.env` — per-Codespace alternative** — used by the clone-this-repo flow. `npm run setup` generates a token and writes `.env` (gitignored); `npm run bridge` and the MCP load it via `--env-file-if-exists`. Rotate: `rm .env && npm run setup`.
 
-Either way, paste the same value into the Figma plugin once (`npm run setup` prints it). Rotate anytime: `rm .env && npm run setup`.
+Paste the same value into the Figma plugin once. If both a secret **and** a matching `.env` exist, the secret (the process environment) wins.
 
 ## Security model
 
