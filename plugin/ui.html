@@ -124,6 +124,7 @@
     <script>
       var ws = null;
       var reconnectOnClose = false;
+      var mcpPeer = false;
 
       function $(id) {
         return document.getElementById(id);
@@ -210,9 +211,15 @@
               setStatus("Ready", "on");
               log("Joined channel.");
             } else if (msg.event === "peer_connected") {
-              log("MCP connected.");
+              if (!mcpPeer) {
+                mcpPeer = true;
+                log("MCP connected.");
+              }
             } else if (msg.event === "peer_disconnected") {
-              log("MCP disconnected.");
+              if (mcpPeer) {
+                mcpPeer = false;
+                log("MCP disconnected.");
+              }
             } else if (msg.event === "error") {
               setStatus(msg.message || "Error", "err");
               log("Bridge error: " + (msg.message || ""));
@@ -226,6 +233,7 @@
 
         ws.onclose = function (ev) {
           setConnected(false);
+          mcpPeer = false;
           // Replaced by a newer instance (e.g. you opened the plugin in another
           // file). Stay idle instead of fighting over the channel.
           if (ev && ev.code === 4002) {

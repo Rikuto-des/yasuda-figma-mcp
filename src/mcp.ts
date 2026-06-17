@@ -71,9 +71,16 @@ class BridgeClient {
 
     ws.on("message", (raw) => this.handleMessage(raw.toString()));
 
-    ws.on("close", () => {
+    ws.on("close", (code) => {
       this.connected = false;
       this.pluginConnected = false;
+      // 4002 = the bridge replaced us with a newer MCP on the same channel.
+      // Stay down instead of reconnecting, or two MCP instances flap forever
+      // (which spams the plugin with repeated "MCP connected").
+      if (code === 4002) {
+        console.error("[mcp] replaced by another MCP instance on this channel; not reconnecting.");
+        return;
+      }
       this.scheduleReconnect();
     });
 
