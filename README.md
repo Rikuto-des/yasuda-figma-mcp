@@ -3,6 +3,12 @@
 公式 Figma MCP の **read 系ツール相当**を、**公開 S3 を一切経由せず**に提供する自前 MCP サーバーです。
 GitHub Codespaces 内で動かし、**GitHub Copilot(agent mode)** から利用することを想定しています。
 
+> **実機検証済み (2026-06-17):** 実 Codespace 上で bridge + MCP を起動し、Copilot が 9 ツールを認識
+> (`Discovered 9 tools`)。`gh codespace ports forward` のプライベートトンネル(公開ポートなし)経由で
+> 実 Figma プラグインと接続し、`get_screenshot`(6576×4000 級の実フレームをローカル描画、S3 不使用)、
+> `get_metadata` / `get_design_context` / `get_variable_defs` / `search_design_system` / `get_document_info`
+> が実データで成功。`whoami` / `libraries` は Figma の `permissions`(`currentuser` / `teamlibrary`)宣言が必要なため manifest に追加済み。
+
 ## なぜ作るか
 
 公式 Figma MCP / REST API の画像取得は、レンダリング結果を

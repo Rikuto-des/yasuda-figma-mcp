@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "bridge": "node dist/bridge.js",
+    "bridge": "node --env-file-if-exists=.env dist/bridge.js",
     "mcp": "node dist/mcp.js",
     "dev:bridge": "tsx watch src/bridge.ts",
     "dev:mcp": "tsx src/mcp.ts",
