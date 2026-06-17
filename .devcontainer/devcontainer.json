@@ -1,0 +1,17 @@
+{
+  "name": "figma-secure-screenshot",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "postCreateCommand": "npm install && npm run build",
+  "forwardPorts": [3055],
+  "portsAttributes": {
+    "3055": {
+      "label": "figma-bridge",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["github.copilot", "github.copilot-chat"]
+    }
+  }
+}

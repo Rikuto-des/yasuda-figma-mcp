@@ -1,0 +1,29 @@
+{
+  "name": "figma-secure-screenshot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Secure Figma screenshot MCP for GitHub Copilot in Codespaces. Renders nodes locally in the running Figma app (exactly like right-click → Copy as PNG) and never uploads to any public S3 URL.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "bridge": "node dist/bridge.js",
+    "mcp": "node dist/mcp.js",
+    "dev:bridge": "tsx watch src/bridge.ts",
+    "dev:mcp": "tsx src/mcp.ts",
+    "token": "node -e \"import('node:crypto').then(c=>console.log(c.randomBytes(32).toString('hex')))\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

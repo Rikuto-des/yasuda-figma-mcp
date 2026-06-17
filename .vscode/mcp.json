@@ -1,0 +1,23 @@
+{
+  "inputs": [
+    {
+      "id": "bridgeToken",
+      "type": "promptString",
+      "description": "Shared BRIDGE_TOKEN (same value the bridge and the Figma plugin use)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "figma-secure-screenshot": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/dist/mcp.js"],
+      "env": {
+        "BRIDGE_URL": "ws://127.0.0.1:3055",
+        "BRIDGE_CHANNEL": "default",
+        "BRIDGE_TOKEN": "${input:bridgeToken}",
+        "REQUEST_TIMEOUT_MS": "30000"
+      }
+    }
+  }
+}

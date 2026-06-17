@@ -1,0 +1,12 @@
+{
+  "name": "Secure Screenshot Bridge",
+  "id": "secure-screenshot-bridge",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma", "figjam", "dev"],
+  "networkAccess": {
+    "allowedDomains": ["ws://localhost:*", "ws://127.0.0.1:*"],
+    "reasoning": "Connects only to a loopback WebSocket bridge reached through a private, GitHub-authenticated `gh codespace ports forward` tunnel. No public endpoint and no third-party services."
+  }
+}

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, -apple-system, system-ui, sans-serif;
+        font-size: 12px;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg);
+      }
+      h1 {
+        font-size: 13px;
+        margin: 0 0 4px;
+      }
+      p.sub {
+        margin: 0 0 12px;
+        color: var(--figma-color-text-secondary);
+      }
+      label {
+        display: block;
+        margin: 8px 0 3px;
+        color: var(--figma-color-text-secondary);
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 7px 8px;
+        border: 1px solid var(--figma-color-border);
+        border-radius: 6px;
+        background: var(--figma-color-bg-secondary);
+        color: var(--figma-color-text);
+        font-size: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button {
+        flex: 1;
+        padding: 8px;
+        border: none;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--figma-color-bg-brand);
+        color: var(--figma-color-text-onbrand);
+      }
+      button.secondary {
+        background: var(--figma-color-bg-secondary);
+        color: var(--figma-color-text);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+        font-weight: 600;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--figma-color-icon-tertiary);
+      }
+      .dot.on {
+        background: #3bb45b;
+      }
+      .dot.err {
+        background: #e0506a;
+      }
+      #log {
+        margin-top: 10px;
+        height: 150px;
+        overflow: auto;
+        padding: 8px;
+        border-radius: 6px;
+        background: var(--figma-color-bg-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        color: var(--figma-color-text-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Secure Screenshot Bridge</h1>
+    <p class="sub">Renders locally (like Copy as PNG). Nothing is uploaded to S3.</p>
+
+    <label for="url">Bridge URL (private gh tunnel — loopback)</label>
+    <input id="url" placeholder="ws://localhost:3055" value="ws://localhost:3055" />
+
+    <label for="token">Token</label>
+    <input id="token" type="password" placeholder="shared BRIDGE_TOKEN" />
+
+    <label for="channel">Channel</label>
+    <input id="channel" placeholder="default" value="default" />
+
+    <div class="row">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+    </div>
+
+    <div class="status">
+      <span id="dot" class="dot"></span><span id="statusText">Not connected</span>
+    </div>
+
+    <div id="log"></div>
+
+    <script>
+      var ws = null;
+      var reconnectOnClose = false;
+
+      function $(id) {
+        return document.getElementById(id);
+      }
+      function log(line) {
+        var el = $("log");
+        el.textContent += line + "\n";
+        el.scrollTop = el.scrollHeight;
+      }
+      function setStatus(text, state) {
+        $("statusText").textContent = text;
+        var dot = $("dot");
+        dot.className = "dot" + (state ? " " + state : "");
+      }
+      function setConnected(isConn) {
+        $("connectBtn").disabled = isConn;
+        $("disconnectBtn").disabled = !isConn;
+      }
+
+      // Messages from the plugin main thread (code.js).
+      onmessage = function (event) {
+        var msg = event.data.pluginMessage;
+        if (!msg) return;
+
+        if (msg.type === "settings") {
+          if (msg.settings) {
+            $("url").value = msg.settings.url || "";
+            $("token").value = msg.settings.token || "";
+            $("channel").value = msg.settings.channel || "default";
+          }
+        } else if (msg.type === "response") {
+          // Result of a read op — relay back to the bridge/MCP.
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify(msg));
+            log(msg.ok ? "✓ response " + short(msg.requestId) : "✗ error " + short(msg.requestId) + ": " + msg.error);
+          }
+        }
+      };
+
+      function short(id) {
+        return id ? String(id).slice(0, 8) : "";
+      }
+
+      function connect() {
+        var url = $("url").value.trim();
+        var token = $("token").value.trim();
+        var channel = $("channel").value.trim() || "default";
+        if (!url || !token) {
+          log("Enter a Bridge URL and Token first.");
+          return;
+        }
+        parent.postMessage(
+          { pluginMessage: { type: "save-settings", settings: { url: url, token: token, channel: channel } } },
+          "*"
+        );
+
+        try {
+          ws = new WebSocket(url);
+        } catch (e) {
+          log("Bad URL: " + e.message);
+          return;
+        }
+        reconnectOnClose = true;
+        setStatus("Connecting…", "");
+
+        ws.onopen = function () {
+          ws.send(JSON.stringify({ type: "join", role: "plugin", channel: channel, token: token }));
+          setStatus("Joining…", "");
+          setConnected(true);
+        };
+
+        ws.onmessage = function (e) {
+          var msg;
+          try {
+            msg = JSON.parse(e.data);
+          } catch (err) {
+            return;
+          }
+          if (msg.type === "system") {
+            if (msg.event === "joined") {
+              setStatus("Ready", "on");
+              log("Joined channel.");
+            } else if (msg.event === "peer_connected") {
+              log("MCP connected.");
+            } else if (msg.event === "peer_disconnected") {
+              log("MCP disconnected.");
+            } else if (msg.event === "error") {
+              setStatus(msg.message || "Error", "err");
+              log("Bridge error: " + (msg.message || ""));
+            }
+          } else if (msg.type === "request") {
+            log("→ op " + msg.op + " " + short(msg.requestId));
+            // Hand off to the main thread to execute against the document.
+            parent.postMessage({ pluginMessage: msg }, "*");
+          }
+        };
+
+        ws.onclose = function () {
+          setConnected(false);
+          setStatus("Disconnected", reconnectOnClose ? "err" : "");
+          if (reconnectOnClose) {
+            log("Connection closed; retrying in 2s…");
+            setTimeout(function () {
+              if (reconnectOnClose) connect();
+            }, 2000);
+          }
+        };
+
+        ws.onerror = function () {
+          log("WebSocket error.");
+        };
+      }
+
+      function disconnect() {
+        reconnectOnClose = false;
+        if (ws) ws.close();
+        ws = null;
+        setConnected(false);
+        setStatus("Not connected", "");
+      }
+
+      $("connectBtn").onclick = connect;
+      $("disconnectBtn").onclick = disconnect;
+    </script>
+  </body>
+</html>
