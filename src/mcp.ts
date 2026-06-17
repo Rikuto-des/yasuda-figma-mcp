@@ -21,6 +21,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { WebSocket } from "ws";
 import { z } from "zod";
 
+import { startBridgeServer } from "./bridge-core.js";
 import { DEFAULT_CHANNEL, DEFAULT_PORT, type RenderedImage } from "./protocol.js";
 
 const BRIDGE_URL = process.env.BRIDGE_URL ?? `ws://127.0.0.1:${DEFAULT_PORT}`;
@@ -445,6 +446,15 @@ server.registerTool(
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  // BRIDGE_EMBED=1 → host the relay in this process, so no separate `npm run
+  // bridge` is needed. Used by the npx/multi-project setup where Copilot
+  // launches only the MCP. The plugin still reaches it over the private tunnel.
+  if (/^(1|true|yes|on)$/i.test(process.env.BRIDGE_EMBED ?? "")) {
+    const port = Number(process.env.BRIDGE_PORT ?? DEFAULT_PORT);
+    startBridgeServer({ port, token: BRIDGE_TOKEN! });
+    console.error(`[mcp] embedded bridge listening on :${port}`);
+  }
+
   bridge.start();
   const transport = new StdioServerTransport();
   await server.connect(transport);

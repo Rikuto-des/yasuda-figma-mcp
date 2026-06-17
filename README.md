@@ -48,7 +48,42 @@ The plugin reaches the Codespace bridge through `gh codespace ports forward` —
 
 If you don't pass `url`/`nodeId`, the tool operates on your **current selection** in Figma.
 
-## Quick start (per developer)
+## Use it in ANY project (npx — no clone, no build) ⭐ recommended
+
+Add this **once** to your VS Code **user** MCP config (Command Palette → **"MCP: Open User Configuration"**). It then works in **every** workspace and Codespace — zero per-project setup:
+
+```json
+{
+  "servers": {
+    "figma-secure-screenshot": {
+      "command": "npx",
+      "args": ["-y", "github:Rikuto-des/figma-secure-screenshot", "mcp"],
+      "env": {
+        "BRIDGE_EMBED": "1",
+        "BRIDGE_PORT": "3055",
+        "BRIDGE_URL": "ws://127.0.0.1:3055",
+        "BRIDGE_CHANNEL": "default"
+      }
+    }
+  }
+}
+```
+
+- **`BRIDGE_EMBED=1`** makes the MCP **host the bridge in-process** — there is no separate bridge to start.
+- **Token, set once:** add a **Codespaces user secret** named `BRIDGE_TOKEN` (GitHub → Settings → Codespaces → Secrets, granted to the repos you use). Every Codespace then inherits it. (Local VS Code instead: put `"BRIDGE_TOKEN": "<your-token>"` in the `env` block above.) Generate a value with `openssl rand -hex 24`.
+- First launch in a fresh Codespace builds the package once (~30–60s, cached afterward).
+
+**Per session** (any project): open its Codespace → start the tunnel locally → run the Figma plugin and Connect:
+
+```bash
+# on your LOCAL machine, pointed at that project's Codespace:
+npx -y github:Rikuto-des/figma-secure-screenshot tunnel
+# or:  gh codespace ports forward 3055:3055 -c <codespace-name>
+```
+
+That's the whole per-project cost: **tunnel + plugin Connect**. Copilot already has the tools (user config) and the token (user secret), and the bridge is embedded.
+
+## Alternative: run from a clone of this repo
 
 1. **Open a Codespace** on this repo (Code → Codespaces → Create). The devcontainer runs `npm install && npm run build && npm run setup`, which **auto-generates your personal token** and writes `.env`.
 2. **Start the bridge** in the Codespace terminal:

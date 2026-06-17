@@ -1,14 +1,30 @@
 {
   "name": "figma-secure-screenshot",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "type": "module",
-  "description": "Secure Figma screenshot MCP for GitHub Copilot in Codespaces. Renders nodes locally in the running Figma app (exactly like right-click → Copy as PNG) and never uploads to any public S3 URL.",
+  "description": "Secure, read-only Figma MCP for GitHub Copilot. Renders locally in the running Figma app (like Copy as PNG) and never uploads to any public S3 URL.",
+  "license": "MIT",
+  "author": "Rikuto Yasuda",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rikuto-des/figma-secure-screenshot.git"
+  },
+  "bin": {
+    "figma-secure-screenshot": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "plugin",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "setup": "node scripts/setup.mjs",
     "bridge": "node --env-file-if-exists=.env dist/bridge.js",
     "tunnel": "bash scripts/tunnel.sh",
