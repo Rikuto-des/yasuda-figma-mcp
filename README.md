@@ -99,6 +99,8 @@ Every Codespace you open now has `$BRIDGE_TOKEN` injected automatically; the MCP
 
 `BRIDGE_EMBED=1` makes the MCP **host the bridge in-process**, so there's no separate bridge to start. (Local VS Code, no Codespaces secret? Add `"BRIDGE_TOKEN": "<your-token>"` to this `env` block instead.)
 
+> **Codespaces note:** user-level config only reaches a Codespace if VS Code **Settings Sync** is on. The reliable option is to commit the **same `{ "servers": { … } }`** as **`.vscode/mcp.json`** in each repo you'll use it in — then it's always present when that repo's Codespace opens. (Not `.github/`, not `devcontainer.json` — those don't define MCP servers.)
+
 **4 — Give the local `gh` CLI the `codespace` scope** (needed for the tunnel; once):
 
 ```bash
@@ -109,22 +111,33 @@ gh auth refresh -h github.com -s codespace
 
 ### Per session (each project, each time)
 
-**1 — Open the project's Codespace.** Copilot auto-launches the MCP, and the embedded bridge starts with it. The first launch in a fresh Codespace builds the package once (~30–60 s, cached afterward).
+> **Order matters** — the bridge must be listening on `:3055` **inside the Codespace** before the tunnel can connect:
+> **(1) bridge up in the Codespace → (2) tunnel from your own computer → (3) plugin Connect.**
 
-**2 — Open the private tunnel on your local machine** and leave it running:
+**1 — Open the project's Codespace and make sure the bridge is listening on `:3055`.** With the MCP configured (above) and `BRIDGE_EMBED=1`, Copilot starts the MCP — which hosts the bridge — when the MCP first loads (open Copilot Chat in **agent** mode, or run **"MCP: List Servers" → Start**). A fresh Codespace builds the package once (~30–60 s).
+
+> Simplest way to be sure (and to test the path): in the **Codespace terminal**, start it explicitly and leave it running:
+> ```bash
+> echo "$BRIDGE_TOKEN"                                   # must be non-empty
+> npx -y github:Rikuto-des/yasuda-figma-mcp bridge       # → [bridge] listening on 0.0.0.0:3055
+> ```
+
+**2 — Open the tunnel on YOUR OWN computer's terminal — NOT the Codespace terminal.** It maps your computer's `localhost:3055` to the Codespace so the Figma desktop app can reach it:
 
 ```bash
-npx -y github:Rikuto-des/yasuda-figma-mcp tunnel
-# or:  gh codespace ports forward 3055:3055 -c <codespace-name>
+gh codespace list                                # find your Codespace name
+gh codespace ports forward 3055:3055 -c <name>   # leave this running
+# (from a local clone of this repo you can also run:  npm run tunnel)
 ```
 
-**3 — Run the Figma plugin** ("Yasuda Figma MCP") → paste your token → **Connect** (status turns **Ready**).
+> `connect failed (Connection refused)` here = nothing is listening on `:3055` in the Codespace yet → do step 1.
+> `No Codespace found` = you ran this **inside** the Codespace → run it on your own computer instead.
 
-- To reveal the token inside the Codespace terminal: `echo "$BRIDGE_TOKEN"`.
+**3 — Run the Figma plugin** ("Yasuda Figma MCP") on your computer. It **auto-connects** with your saved settings (first time: paste the token — reveal it with `echo "$BRIDGE_TOKEN"` in the Codespace terminal). Status turns **Ready**.
 
 **4 — Use Copilot** (agent mode), e.g. *"screenshot my current Figma selection"*. The 9 `yfigma_*` tools are available.
 
-That's the whole per-project cost: **tunnel + plugin Connect**. Copilot already has the tools (user config), the token (user secret), and the bridge (embedded).
+That's the whole per-project cost: **bridge up → tunnel → plugin Connect**.
 
 ## Alternative: run from a clone of this repo
 
@@ -191,9 +204,12 @@ Paste the same value into the Figma plugin once. If both a secret **and** a matc
 
 ## Troubleshooting
 
+- **`No Codespace found` (running `tunnel`)** — you ran the tunnel **inside the Codespace**. It must run on **your own computer's** terminal (it bridges *your* localhost to the Codespace). Check there with `gh codespace list`.
+- **`connect failed (Connection refused)` on the tunnel** — the tunnel is fine, but **nothing is listening on `:3055` in the Codespace**. Start the bridge there: open Copilot so it launches the MCP (embedded bridge), or run `npx -y github:Rikuto-des/yasuda-figma-mcp bridge` in the Codespace terminal. Then retry the tunnel.
+- **`echo "$BRIDGE_TOKEN"` is empty in the Codespace** — the secret isn't present. A Codespaces secret added **after** the Codespace was created only appears after a **rebuild / reopen** (or `export BRIDGE_TOKEN=…` temporarily).
 - **"Figma plugin is not connected"** — run the plugin and Connect; check the token/URL/channel match. The bridge log should show `plugin joined`.
-- **"Bridge is not connected"** — `npm run bridge` running in the Codespace? `BRIDGE_TOKEN` set (`npm run setup`)?
-- **Plugin won't connect** — is `gh codespace ports forward 3055:3055` running locally? Plugin URL `ws://localhost:3055`? Tunnel dropped → restart it.
+- **"Bridge is not connected"** — is the bridge (or Copilot's MCP) running in the Codespace? Is `BRIDGE_TOKEN` set?
+- **Plugin won't connect** — is `gh codespace ports forward 3055:3055` running on your own computer? Plugin URL `ws://localhost:3055`? Tunnel dropped → restart it.
 - **Multiple pages vs files** — switching **pages** in the same file needs nothing: the plugin stays connected and follows the active page (target other pages by `nodeId`/`url`, or `allPages:true` for search). Switching **files** closes the plugin (Figma runs plugins per file) — just re-run it; it **auto-connects** with your saved token. If it's open in several files at once, the newest connection wins and the others go idle (no flapping).
 - **Image not shown in Copilot** — use a vision-capable model. `yfigma_get_screenshot` also accepts `saveToFile: true` to write the PNG into the Codespace (still no S3).
 
