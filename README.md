@@ -34,6 +34,8 @@ and **never uploads anything to a public S3 URL**.
 
 The plugin reaches the Codespace bridge through `gh codespace ports forward` — a **private, GitHub-authenticated tunnel to your own `localhost`**. No port is ever made public.
 
+> 📐 **Deep dive:** the full request lifecycle, wire protocol, target resolution, and exactly how each tool works (Figma APIs, inputs, outputs) are documented in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ## Tools (9, all read-only, all local)
 
 | Tool | Returns | Figma API used (all local) |

@@ -34,6 +34,8 @@
 
 プラグインは `gh codespace ports forward`(=**自分の `localhost` への GitHub 認証済みプライベートトンネル**)で Codespace の bridge に到達します。**公開ポートは一切作りません。**
 
+> 📐 **詳細:** リクエストのライフサイクル、ワイヤープロトコル、ターゲット解決、そして各ツールが具体的にどう動くか(Figma API・入力・返り値)は **[docs/ARCHITECTURE.ja.md](docs/ARCHITECTURE.ja.md)** に記載しています。
+
 ## ツール(9個、すべて read 専用・すべてローカル)
 
 | ツール | 返すもの | 使用 Figma API(すべてローカル) |
