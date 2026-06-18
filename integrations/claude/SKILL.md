@@ -1,5 +1,5 @@
 ---
-name: figma-design
+name: yfigma
 description: Use when implementing, matching, or extracting anything from a Figma design — e.g. the user shares a figma.com URL, says "implement this frame / screen / component", or asks for exact spacing, colors, typography, or design tokens. Reads the user's currently-open Figma file via the yasuda-figma-mcp read-only tools (yfigma_*).
 ---
 
