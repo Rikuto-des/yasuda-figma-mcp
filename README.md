@@ -52,7 +52,7 @@ The plugin reaches the Codespace bridge through `gh codespace ports forward` —
 
 If you don't pass `url`/`nodeId`, the tool operates on your **current selection** in Figma.
 
-> 🤝 **Teach your agent to use these tools well:** ready-made instruction files for **Codex** and **GitHub Copilot** live in [`integrations/`](integrations/) (design→code workflow, token reuse, node targeting).
+> 🤝 **Teach Copilot to use these tools well:** a ready-made **`/yfigma`** prompt for **GitHub Copilot** lives in [`integrations/`](integrations/) (design→code workflow, token reuse, node targeting).
 
 ## Setup ⭐ recommended (npx + Codespaces secret)
 
