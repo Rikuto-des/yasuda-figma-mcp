@@ -119,17 +119,16 @@ spec 全体を修復できる。
 ## 適用結果（返り値）
 
 ```jsonc
-// 適用時
+// 適用成功
 {
-  "ok": true,
-  "root": { "id": "120:5", "name": "ログイン" },
+  "valid": true,
+  "root": { "id": "120:5", "name": "ログイン", "type": "FRAME" },
   "created": ["120:5", "120:6", "120:7", "120:8"],
   "warnings": []
 }
 
-// validateOnly: true のとき（書き込みなし）
+// validateOnly: true（書き込みなし） / または適用が検証で却下されたとき（何も書かれない）
 {
-  "ok": true,
   "valid": false,
   "errors": [
     { "path": "root.children[2].props.Variant",
@@ -140,6 +139,8 @@ spec 全体を修復できる。
   ]
 }
 ```
+
+`warnings` は MCP 側の構造検証（色・余白リテラル等）とプラグイン側の報告をマージして返す。
 
 ## 具体例（Input + Button のログイン画面）
 
@@ -167,8 +168,24 @@ spec 全体を修復できる。
 `version` は `1`。`apply_ui_spec` は一致しない `version` を却下する。破壊的変更は
 `version` を上げ、プラグイン側で旧バージョンの受理可否を判断する。
 
+## 実装状況（段階導入）
+
+スキーマは v1 全体を定義しているが、`apply_ui_spec` の実装は段階的。**未実装の機能は
+黙って無視せず、明確なエラーで報告する**（silent failure を作らない方針）。
+
+| 機能 | 状態 |
+|---|---|
+| `frame`（オートレイアウト・literal gap/padding/aligns） | ✅ B |
+| `frame` の `width`/`height`：`"HUG"`・数値(FIXED) | ✅ B |
+| `instance`（ローカル COMPONENT / COMPONENT_SET 既定バリアント、props なし） | ✅ B |
+| `fill`：hex・`"NONE"` | ✅ B |
+| `validateOnly`（実ドキュメント照合のドライラン） | ✅ B |
+| `instance` の `props`（バリアント・TEXT 等） | ⏳ C |
+| `text` ノード（フォント読込） | ⏳ C |
+| トークン参照 `{var}`（gap/padding/fill のバインド） | ⏳ C |
+| `width`/`height` の `"FILL"` | ⏳ C |
+
 ---
 
-**次の一歩（A-2 / A-3）：** プラグインに Design モードガードを足し、観測 op
-`list_component_sets`（バリアント定義・正確な property key）を追加してから、`apply_ui_spec`
-を縦に貫通実装する。
+**次の一歩（C）：** props（`setProperties`）／`text`（`loadFontAsync`）／トークンバインド
+（`setBoundVariable`）を実装し、未実装エラーを順次解消する。

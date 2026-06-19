@@ -72,6 +72,8 @@ async function handleRequest(op, params) {
       return handleDocumentInfo();
     case "whoami":
       return handleWhoami();
+    case "apply_ui_spec":
+      return handleApplyUiSpec(params);
     default:
       throw new Error("Unknown op: " + op);
   }
@@ -516,6 +518,245 @@ async function handleWhoami() {
     fileName: figma.root.name,
     currentPage: figma.currentPage.name,
   };
+}
+
+// ---------------------------------------------------------------------------
+// apply_ui_spec (WRITE) — build a screen from a declarative UI spec.
+//
+// The model never sends code; it sends DATA (the spec, see docs/UI_SPEC.ja.md),
+// and this fixed builder applies it. No eval, no network — same trust boundary
+// as the read ops. The MCP server has already run the full STRUCTURAL validation
+// (src/ui-spec.ts); here we re-validate the bits we use (defense in depth):
+// resolve components against the LIVE document, clamp numbers, and reject
+// features not implemented yet. Application is atomic — any failure removes
+// everything created so the document is never left half-built.
+//
+// Milestone B scope: frame (auto-layout) + instance (no props), literal values
+// only. text nodes, instance props, token binding and "FILL" sizing are
+// rejected with a clear "coming in milestone C" message rather than silently
+// dropped.
+// ---------------------------------------------------------------------------
+
+async function handleApplyUiSpec(params) {
+  requireDesignMode();
+
+  // validateOnly: report against the live document without writing anything.
+  if (params.validateOnly) {
+    const errors = [];
+    await dryValidate(params.root, "root", errors);
+    return { valid: errors.length === 0, errors, warnings: [] };
+  }
+
+  const created = [];
+  let rootNode;
+  try {
+    rootNode = await buildNode(params.root, "root", created);
+    centerInViewport(rootNode);
+    figma.currentPage.selection = [rootNode];
+    figma.viewport.scrollAndZoomIntoView([rootNode]);
+  } catch (e) {
+    // Atomic: undo everything we created so we never leave a half-built tree.
+    for (const n of created.slice().reverse()) {
+      try {
+        n.remove();
+      } catch (_) {
+        // already gone (e.g. removed with its parent)
+      }
+    }
+    return { valid: false, errors: [{ path: "root", message: errMsg(e) }], warnings: [] };
+  }
+
+  return {
+    valid: true,
+    root: { id: rootNode.id, name: rootNode.name, type: rootNode.type },
+    created: created.map((n) => n.id),
+    warnings: [],
+  };
+}
+
+// Features the builder does not implement yet. Returned as errors (not silently
+// ignored) so the agent knows to adjust the spec. buildNode throws on the first;
+// dryValidate collects them all.
+function unimplementedAt(node, path) {
+  const errs = [];
+  if (node.type === "text") {
+    errs.push({ path, message: 'text nodes are not supported yet (coming in milestone C)' });
+  } else if (node.type === "frame") {
+    if (isTokenRef(node.gap)) {
+      errs.push({ path: path + ".gap", message: 'token binding is not supported yet (coming in milestone C); use a number' });
+    }
+    if (paddingHasToken(node.padding)) {
+      errs.push({ path: path + ".padding", message: 'token binding is not supported yet (coming in milestone C); use numbers' });
+    }
+    if (isTokenRef(node.fill)) {
+      errs.push({ path: path + ".fill", message: 'color token binding is not supported yet (coming in milestone C); use a hex color or "NONE"' });
+    }
+    if (node.width === "FILL") {
+      errs.push({ path: path + ".width", message: '"FILL" sizing is not supported yet (coming in milestone C); use "HUG" or a number' });
+    }
+    if (node.height === "FILL") {
+      errs.push({ path: path + ".height", message: '"FILL" sizing is not supported yet (coming in milestone C); use "HUG" or a number' });
+    }
+  } else if (node.type === "instance") {
+    if (node.props && Object.keys(node.props).length > 0) {
+      errs.push({ path: path + ".props", message: 'instance props are not applied yet (coming in milestone C)' });
+    }
+  }
+  return errs;
+}
+
+async function dryValidate(node, path, errors) {
+  if (!node || typeof node !== "object") {
+    errors.push({ path, message: "node must be an object" });
+    return;
+  }
+  for (const e of unimplementedAt(node, path)) errors.push(e);
+
+  if (node.type === "instance") {
+    try {
+      await resolveComponent(node.componentId);
+    } catch (e) {
+      errors.push({ path: path + ".componentId", message: errMsg(e) });
+    }
+  } else if (node.type === "frame" && Array.isArray(node.children)) {
+    for (let i = 0; i < node.children.length; i++) {
+      await dryValidate(node.children[i], path + ".children[" + i + "]", errors);
+    }
+  }
+}
+
+async function buildNode(node, path, created) {
+  const u = unimplementedAt(node, path);
+  if (u.length) throw new Error(u[0].message);
+  if (node.type === "frame") return buildFrame(node, path, created);
+  if (node.type === "instance") return buildInstance(node, created);
+  throw new Error("unsupported node type at " + path + ": " + node.type);
+}
+
+async function buildFrame(node, path, created) {
+  const frame = figma.createFrame();
+  created.push(frame);
+  if (node.name) frame.name = node.name;
+  frame.layoutMode = node.layout;
+
+  if (node.gap !== undefined) frame.itemSpacing = clampNum(node.gap, 0, 10000, 0);
+  if (node.padding !== undefined) applyPadding(frame, node.padding);
+  if (node.primaryAxisAlign) frame.primaryAxisAlignItems = node.primaryAxisAlign;
+  if (node.counterAxisAlign) frame.counterAxisAlignItems = node.counterAxisAlign;
+  if (node.fill !== undefined) applyFill(frame, node.fill);
+
+  // Build and append children BEFORE sizing, so HUG reflects their content.
+  if (Array.isArray(node.children)) {
+    for (let i = 0; i < node.children.length; i++) {
+      const child = await buildNode(node.children[i], path + ".children[" + i + "]", created);
+      frame.appendChild(child);
+    }
+  }
+
+  applyAxisSize(frame, "horizontal", node.width);
+  applyAxisSize(frame, "vertical", node.height);
+  return frame;
+}
+
+async function buildInstance(node, created) {
+  const comp = await resolveComponent(node.componentId); // throws on any problem
+  const inst = comp.createInstance();
+  created.push(inst);
+  if (node.name) inst.name = node.name;
+  return inst;
+}
+
+// Resolve a spec componentId to the local COMPONENT to instantiate. A
+// COMPONENT_SET resolves to its default variant. Rejects non-components and
+// remote (library) components — MVP is local-only.
+async function resolveComponent(componentId) {
+  const node = await figma.getNodeByIdAsync(componentId);
+  if (!node) throw new Error("component not found: " + componentId);
+  if (node.type !== "COMPONENT" && node.type !== "COMPONENT_SET") {
+    throw new Error("componentId " + componentId + " is a " + node.type + ", not a COMPONENT or COMPONENT_SET");
+  }
+  if (node.remote) {
+    throw new Error("component " + componentId + " is from a remote library; only local components are supported");
+  }
+  if (node.type === "COMPONENT_SET") {
+    const dv = node.defaultVariant;
+    if (!dv) throw new Error("component set " + componentId + " has no default variant");
+    return dv;
+  }
+  return node;
+}
+
+function applyPadding(frame, padding) {
+  if (typeof padding === "number") {
+    const v = clampNum(padding, 0, 10000, 0);
+    frame.paddingTop = v;
+    frame.paddingRight = v;
+    frame.paddingBottom = v;
+    frame.paddingLeft = v;
+    return;
+  }
+  if (padding && typeof padding === "object") {
+    if (padding.top !== undefined) frame.paddingTop = clampNum(padding.top, 0, 10000, 0);
+    if (padding.right !== undefined) frame.paddingRight = clampNum(padding.right, 0, 10000, 0);
+    if (padding.bottom !== undefined) frame.paddingBottom = clampNum(padding.bottom, 0, 10000, 0);
+    if (padding.left !== undefined) frame.paddingLeft = clampNum(padding.left, 0, 10000, 0);
+  }
+}
+
+function applyFill(frame, fill) {
+  if (fill === "NONE") {
+    frame.fills = [];
+    return;
+  }
+  if (typeof fill === "string") {
+    const rgb = hexToRgb(fill);
+    if (rgb) frame.fills = [{ type: "SOLID", color: { r: rgb.r, g: rgb.g, b: rgb.b }, opacity: rgb.a }];
+  }
+  // token fills are rejected upstream (unimplementedAt)
+}
+
+function applyAxisSize(frame, axis, value) {
+  const horiz = axis === "horizontal";
+  // undefined or "HUG" -> hug contents (FILL is rejected upstream for now).
+  if (value === undefined || value === "HUG") {
+    if (horiz) frame.layoutSizingHorizontal = "HUG";
+    else frame.layoutSizingVertical = "HUG";
+    return;
+  }
+  // number -> fixed size on that axis.
+  if (horiz) {
+    frame.layoutSizingHorizontal = "FIXED";
+    frame.resize(clampNum(value, 1, 100000, frame.width), frame.height);
+  } else {
+    frame.layoutSizingVertical = "FIXED";
+    frame.resize(frame.width, clampNum(value, 1, 100000, frame.height));
+  }
+}
+
+function centerInViewport(node) {
+  const c = figma.viewport.center;
+  node.x = Math.round(c.x - node.width / 2);
+  node.y = Math.round(c.y - node.height / 2);
+}
+
+function isTokenRef(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v) && "var" in v;
+}
+
+function paddingHasToken(p) {
+  if (isTokenRef(p)) return true;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    for (const k of ["top", "right", "bottom", "left"]) if (isTokenRef(p[k])) return true;
+  }
+  return false;
+}
+
+function hexToRgb(hex) {
+  const m = /^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/.exec(hex);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const a = m[2] !== undefined ? parseInt(m[2], 16) / 255 : 1;
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255, a };
 }
 
 // ---------------------------------------------------------------------------
