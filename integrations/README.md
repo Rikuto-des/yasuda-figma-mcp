@@ -1,7 +1,8 @@
 # Agent integrations — teach your AI to use yasuda-figma-mcp well
 
-Drop-in prompt so **GitHub Copilot** uses the `yfigma_*` tools effectively — the design→code
-workflow, reusing design tokens and components, and correct node targeting.
+Drop-in prompt so **GitHub Copilot** uses the `yfigma_*` tools effectively — both the
+**design→code** workflow (read) and the **code→design** workflow (generate UI into Figma from
+your existing components, write), reusing design tokens and components with correct node targeting.
 
 | Agent | File here | Copy it to |
 |---|---|---|
