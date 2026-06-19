@@ -62,6 +62,8 @@ async function handleRequest(op, params) {
       return handleVariableDefs(params);
     case "search_design_system":
       return handleSearch(params);
+    case "list_component_sets":
+      return handleListComponentSets(params);
     case "libraries":
       return handleLibraries();
     case "figjam":
@@ -284,6 +286,15 @@ async function handleSearch(params) {
   const results = [];
 
   if (kinds.indexOf("component") !== -1) {
+    // dynamic-page docs throw on figma.root traversal until all pages are loaded.
+    // Without this, allPages would silently return an empty list.
+    if (params.allPages) {
+      try {
+        await figma.loadAllPagesAsync();
+      } catch (e) {
+        // ignore — fall back to whatever is already loaded
+      }
+    }
     const root = params.allPages ? figma.root : figma.currentPage;
     let comps = [];
     try {
@@ -294,7 +305,7 @@ async function handleSearch(params) {
     for (const c of comps) {
       if (!q || c.name.toLowerCase().indexOf(q) !== -1) {
         results.push({ kind: "component", type: c.type, id: c.id, name: c.name, key: c.key || undefined });
-        if (results.length >= limit) return finishSearch(params.query, results);
+        if (results.length >= limit) return finishSearch(params.query, results, true);
       }
     }
   }
@@ -309,7 +320,7 @@ async function handleSearch(params) {
       for (const s of pair[1]) {
         if (!q || s.name.toLowerCase().indexOf(q) !== -1) {
           results.push({ kind: "style", styleType: pair[0], id: s.id, name: s.name, key: s.key || undefined });
-          if (results.length >= limit) return finishSearch(params.query, results);
+          if (results.length >= limit) return finishSearch(params.query, results, true);
         }
       }
     }
@@ -317,8 +328,10 @@ async function handleSearch(params) {
   return finishSearch(params.query, results);
 }
 
-function finishSearch(query, results) {
-  return { query, count: results.length, results };
+function finishSearch(query, results, truncated) {
+  const out = { query, count: results.length, results };
+  if (truncated) out.truncated = true;
+  return out;
 }
 
 async function safeStyles(getter) {
@@ -327,6 +340,88 @@ async function safeStyles(getter) {
   } catch (e) {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// list_component_sets (variant defs + exact property keys for planning writes)
+// ---------------------------------------------------------------------------
+
+async function handleListComponentSets(params) {
+  const q = String(params.query || "").toLowerCase();
+  const limit = clampNum(params.limit, 1, 200, 50);
+
+  // dynamic-page docs throw on figma.root traversal until all pages are loaded.
+  // Without this, allPages would silently return an empty list.
+  if (params.allPages) {
+    try {
+      await figma.loadAllPagesAsync();
+    } catch (e) {
+      // ignore — fall back to whatever is already loaded
+    }
+  }
+  const root = params.allPages ? figma.root : figma.currentPage;
+
+  let nodes = [];
+  try {
+    nodes = root.findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] });
+  } catch (e) {
+    // ignore
+  }
+
+  const componentSets = [];
+  const components = [];
+  let truncated = false;
+  for (const n of nodes) {
+    if (q && n.name.toLowerCase().indexOf(q) === -1) continue;
+    if (componentSets.length + components.length >= limit) {
+      truncated = true;
+      break;
+    }
+    if (n.type === "COMPONENT_SET") {
+      componentSets.push({
+        id: n.id,
+        name: n.name,
+        key: n.key || undefined,
+        variantCount: "children" in n ? n.children.length : 0,
+        properties: propDefs(n),
+      });
+    } else if (n.type === "COMPONENT") {
+      // Skip variants that live inside a set — the set already represents them.
+      if (n.parent && n.parent.type === "COMPONENT_SET") continue;
+      components.push({ id: n.id, name: n.name, key: n.key || undefined, properties: propDefs(n) });
+    }
+  }
+  const out = { count: componentSets.length + components.length, componentSets, components };
+  if (truncated) out.truncated = true;
+  return out;
+}
+
+// Summarize componentPropertyDefinitions. Keys are the EXACT Figma keys: a plain
+// name for VARIANT, "name#id" for TEXT/BOOLEAN/INSTANCE_SWAP. We also expose the
+// friendly name so the agent can author specs by name and still see the exact key.
+function propDefs(node) {
+  let defs = null;
+  try {
+    defs = node.componentPropertyDefinitions;
+  } catch (e) {
+    return undefined;
+  }
+  if (!defs) return undefined;
+  const out = {};
+  for (const key of Object.keys(defs)) {
+    const d = defs[key];
+    const o = { type: d.type, name: friendlyPropName(key) };
+    if (d.defaultValue !== undefined) o.default = d.defaultValue;
+    if (d.variantOptions) o.options = d.variantOptions;
+    if (d.type === "INSTANCE_SWAP" && d.preferredValues) o.preferredValues = d.preferredValues;
+    out[key] = o;
+  }
+  return out;
+}
+
+function friendlyPropName(key) {
+  const i = key.indexOf("#");
+  return i === -1 ? key : key.slice(0, i);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +529,22 @@ function round(n) {
 function clampNum(v, min, max, fallback) {
   const n = typeof v === "number" ? v : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Write ops require Figma Design mode. Dev Mode runs plugins read-only and
+ * FigJam/Slides have no design surface, so reject writes there with a clear
+ * message instead of failing deep inside the Figma API. Reads work in any mode.
+ * Wired into the write ops added in the apply_ui_spec milestone.
+ */
+function requireDesignMode() {
+  if (figma.editorType !== "figma") {
+    throw new Error(
+      "Write operations require Figma Design mode (current editor: " +
+        figma.editorType +
+        "). Dev Mode runs plugins read-only — switch to Design mode and retry.",
+    );
+  }
 }
 
 function values(obj) {

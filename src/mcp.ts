@@ -344,7 +344,7 @@ server.registerTool(
   {
     title: "Search Figma design system",
     description:
-      "Search components, component sets and styles (paint/text/effect) in the current file by name substring. Returns matching names with their node ids and published keys where available.",
+      "Search components, component sets and styles (paint/text/effect) in the current file by name substring. Returns matching names with their node ids and published keys where available. If the result has truncated:true, the limit was hit — narrow with the query argument.",
     inputSchema: {
       query: z.string().describe("Case-insensitive substring to match against component/style names."),
       kinds: z
@@ -360,6 +360,33 @@ server.registerTool(
       const result = await bridge.request("search_design_system", {
         query: args.query,
         kinds: args.kinds ?? ["component", "style"],
+        allPages: args.allPages ?? false,
+        limit: args.limit ?? 50,
+      });
+      return jsonResult(result);
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+// 5b) List component sets — variant definitions + exact property keys for planning writes.
+server.registerTool(
+  "yfigma_list_component_sets",
+  {
+    title: "List Figma component sets (variants + property keys)",
+    description:
+      "List local component sets and standalone components with their property definitions: variant groups and their options, defaults, and the EXACT property keys (plain name for VARIANT, name#id for TEXT/BOOLEAN/INSTANCE_SWAP) plus a friendly name for each. Use this to plan apply_ui_spec instances accurately. Variants that live inside a set are represented by the set, not listed separately. If the result has truncated:true, narrow with the query argument.",
+    inputSchema: {
+      query: z.string().optional().describe("Case-insensitive substring to match against component/set names."),
+      allPages: z.boolean().optional().describe("Search across all pages (default false: current page only)."),
+      limit: z.number().int().min(1).max(200).optional().describe("Max results (default 50)."),
+    },
+  },
+  async (args) => {
+    try {
+      const result = await bridge.request("list_component_sets", {
+        query: args.query ?? "",
         allPages: args.allPages ?? false,
         limit: args.limit ?? 50,
       });
