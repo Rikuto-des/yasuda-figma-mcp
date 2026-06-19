@@ -489,6 +489,12 @@ server.registerTool(
         .boolean()
         .optional()
         .describe("If true, validate against the live document and return a report without writing."),
+      target: z
+        .object({ mode: z.enum(["create", "into-selection", "update-selection"]) })
+        .optional()
+        .describe(
+          'Where to apply: "create" (default — a new screen at the viewport center), "into-selection" (append the root into the selected auto-layout frame), or "update-selection" (update the selected node to match the root).',
+        ),
       root: z
         .record(z.unknown())
         .describe("The single root node (usually a frame). See docs/UI_SPEC.ja.md for the schema."),
@@ -498,6 +504,7 @@ server.registerTool(
     try {
       const spec: Record<string, unknown> = { version: args.version, root: args.root };
       if (args.validateOnly !== undefined) spec.validateOnly = args.validateOnly;
+      if (args.target !== undefined) spec.target = args.target;
 
       // Layer 1: structural validation (the source of truth) — reject early,
       // before involving the plugin or the live document.

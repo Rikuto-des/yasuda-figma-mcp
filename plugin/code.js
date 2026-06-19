@@ -538,41 +538,177 @@ async function handleWhoami() {
 
 async function handleApplyUiSpec(params) {
   requireDesignMode();
+  const mode = (params.target && params.target.mode) || "create";
 
-  // validateOnly: report against the live document without writing anything.
-  if (params.validateOnly) {
-    const errors = [];
-    await dryValidate(params.root, "root", true, errors);
+  // Always validate against the live document FIRST, and never write if invalid.
+  // create rolls back cleanly on failure, but selection edits mutate existing
+  // nodes that can't be perfectly undone — validate-first is how we keep them safe.
+  const errors = [];
+  await dryValidateRoot(params, mode, errors);
+  if (params.validateOnly || errors.length > 0) {
     return { valid: errors.length === 0, errors, warnings: [] };
   }
 
+  if (mode === "create") return applyCreate(params);
+  if (mode === "into-selection") return applyIntoSelection(params);
+  if (mode === "update-selection") return applyUpdateSelection(params);
+  return { valid: false, errors: [{ path: "target.mode", message: "unknown target mode: " + mode }], warnings: [] };
+}
+
+// ---- apply modes ----------------------------------------------------------
+
+async function applyCreate(params) {
   const created = [];
   let rootNode;
   try {
     rootNode = await buildNode(params.root, "root", created);
     // Size the root now that it is on the page (FILL on the root is rejected here).
-    if (params.root && params.root.type === "frame") applyFrameSizing(rootNode, params.root, "root", true);
+    if (params.root.type === "frame") applyFrameSizing(rootNode, params.root, "root", true);
     centerInViewport(rootNode);
     figma.currentPage.selection = [rootNode];
     figma.viewport.scrollAndZoomIntoView([rootNode]);
   } catch (e) {
-    // Atomic: undo everything we created so we never leave a half-built tree.
-    for (const n of created.slice().reverse()) {
-      try {
-        n.remove();
-      } catch (_) {
-        // already gone (e.g. removed with its parent)
-      }
-    }
-    return { valid: false, errors: [{ path: "root", message: errMsg(e) }], warnings: [] };
+    rollback(created); // atomic: never leave a half-built tree
+    return applyError(e);
   }
+  return applyOk(rootNode, created);
+}
 
+async function applyIntoSelection(params) {
+  let parent;
+  try {
+    parent = requireSingleSelection();
+  } catch (e) {
+    return applyError(e);
+  }
+  if (!isAutoLayoutFrame(parent)) {
+    return applyError(new Error("the selected node must be an auto-layout frame to append into (selected: " + parent.type + ")"));
+  }
+  const created = [];
+  let child;
+  try {
+    child = await buildNode(params.root, "root", created);
+    parent.appendChild(child);
+    if (params.root.type === "frame") applyFrameSizing(child, params.root, "root", false);
+    figma.currentPage.selection = [child];
+    figma.viewport.scrollAndZoomIntoView([child]);
+  } catch (e) {
+    rollback(created);
+    return applyError(e);
+  }
+  return applyOk(child, created);
+}
+
+async function applyUpdateSelection(params) {
+  let node;
+  try {
+    node = requireSingleSelection();
+  } catch (e) {
+    return applyError(e);
+  }
+  const created = [];
+  try {
+    await updateSelectedNode(node, params.root, "root", !parentIsAutoLayout(node));
+    figma.currentPage.selection = [node];
+    figma.viewport.scrollAndZoomIntoView([node]);
+  } catch (e) {
+    rollback(created); // best-effort: removes nodes we added (in-place prop edits can't be undone)
+    return applyError(e);
+  }
+  return applyOk(node, created);
+}
+
+// Update an existing node in place from the spec. E-1 updates the node's OWN
+// properties (frame layout/style, instance props, text). Child reconciliation
+// is E-2 and is rejected here with a clear message.
+async function updateSelectedNode(node, spec, path, isRoot) {
+  if (!typeCompatible(spec.type, node.type)) {
+    throw new Error(
+      "selected node is a " + node.type + " but the spec root is a " + spec.type + "; types must match for update-selection",
+    );
+  }
+  if (spec.type === "frame") {
+    if (Array.isArray(spec.children) && spec.children.length > 0) {
+      throw new Error("updating the children of an existing frame is not supported yet; omit `children` to update the frame's own properties");
+    }
+    await configureFrame(node, spec, path);
+    applyFrameSizing(node, spec, path, isRoot);
+  } else if (spec.type === "instance") {
+    // componentId is ignored here — update-selection edits THIS instance; it does
+    // not swap to a different component.
+    if (spec.name) node.name = spec.name;
+    if (spec.props && Object.keys(spec.props).length > 0) {
+      const defs = await defsForInstance(node);
+      const map = resolveInstanceProps(defs, spec.props, path);
+      const needsFont = Object.keys(map).some((k) => defs[k] && defs[k].type === "TEXT");
+      if (needsFont) await loadInstanceTextFonts(node);
+      node.setProperties(map);
+    }
+  } else if (spec.type === "text") {
+    await configureText(node, spec, path);
+  }
+}
+
+// ---- selection helpers ----------------------------------------------------
+
+function requireSingleSelection() {
+  const sel = figma.currentPage.selection;
+  if (sel.length === 0) throw new Error('nothing is selected — select a node, or use target.mode "create"');
+  if (sel.length > 1) throw new Error("select exactly one node (" + sel.length + " are selected)");
+  return sel[0];
+}
+
+function isAutoLayoutFrame(node) {
+  return !!node && node.type === "FRAME" && "layoutMode" in node && node.layoutMode !== "NONE";
+}
+
+function parentIsAutoLayout(node) {
+  return isAutoLayoutFrame(node.parent);
+}
+
+function typeCompatible(specType, figmaType) {
+  return (
+    (specType === "frame" && figmaType === "FRAME") ||
+    (specType === "instance" && figmaType === "INSTANCE") ||
+    (specType === "text" && figmaType === "TEXT")
+  );
+}
+
+// Property definitions for an existing instance, from the component set (variant
+// props live there) or the standalone main component.
+async function defsForInstance(inst) {
+  const main = await inst.getMainComponentAsync();
+  if (!main) return {};
+  let source = main;
+  if (main.parent && main.parent.type === "COMPONENT_SET") source = main.parent;
+  try {
+    return source.componentPropertyDefinitions || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function rollback(created) {
+  for (const n of created.slice().reverse()) {
+    try {
+      n.remove();
+    } catch (_) {
+      // already gone (e.g. removed with its parent)
+    }
+  }
+}
+
+function applyOk(rootNode, created) {
   return {
     valid: true,
     root: { id: rootNode.id, name: rootNode.name, type: rootNode.type },
     created: created.map((n) => n.id),
     warnings: [],
   };
+}
+
+function applyError(e) {
+  return { valid: false, errors: [{ path: "root", message: errMsg(e) }], warnings: [] };
 }
 
 // Read-only validation against the LIVE document. Mirrors what build* does, but
@@ -642,6 +778,75 @@ async function dryCheckPaddingVars(padding, path, errors) {
   }
 }
 
+// Route dry validation by target mode (mirrors the apply* dispatch).
+async function dryValidateRoot(params, mode, errors) {
+  if (!params.root || typeof params.root !== "object") {
+    errors.push({ path: "root", message: "root must be an object" });
+    return;
+  }
+  if (mode === "create") {
+    await dryValidate(params.root, "root", true, errors);
+  } else if (mode === "into-selection") {
+    let parent;
+    try {
+      parent = requireSingleSelection();
+    } catch (e) {
+      errors.push({ path: "target", message: errMsg(e) });
+      return;
+    }
+    if (!isAutoLayoutFrame(parent)) {
+      errors.push({ path: "target", message: "the selected node must be an auto-layout frame to append into (selected: " + parent.type + ")" });
+    }
+    await dryValidate(params.root, "root", false, errors); // parent is auto-layout → root FILL allowed
+  } else if (mode === "update-selection") {
+    let node;
+    try {
+      node = requireSingleSelection();
+    } catch (e) {
+      errors.push({ path: "target", message: errMsg(e) });
+      return;
+    }
+    await dryValidateUpdate(node, params.root, "root", !parentIsAutoLayout(node), errors);
+  } else {
+    errors.push({ path: "target.mode", message: "unknown target mode: " + mode });
+  }
+}
+
+async function dryValidateUpdate(node, spec, path, isRoot, errors) {
+  if (!typeCompatible(spec.type, node.type)) {
+    errors.push({ path, message: "selected node is a " + node.type + " but the spec root is a " + spec.type + "; types must match for update-selection" });
+    return;
+  }
+  if (spec.type === "frame") {
+    if (Array.isArray(spec.children) && spec.children.length > 0) {
+      errors.push({ path: path + ".children", message: "updating the children of an existing frame is not supported yet; omit `children`" });
+    }
+    if (isRoot && (spec.width === "FILL" || spec.height === "FILL")) {
+      errors.push({ path, message: '"FILL" needs an auto-layout parent; the selected frame has none' });
+    }
+    await dryCheckVar(spec.gap, "FLOAT", path + ".gap", errors);
+    await dryCheckPaddingVars(spec.padding, path + ".padding", errors);
+    await dryCheckVar(spec.fill, "COLOR", path + ".fill", errors);
+  } else if (spec.type === "instance") {
+    try {
+      const defs = await defsForInstance(node);
+      if (spec.props && Object.keys(spec.props).length > 0) resolveInstanceProps(defs, spec.props, path);
+    } catch (e) {
+      errors.push({ path, message: errMsg(e) });
+    }
+  } else if (spec.type === "text") {
+    if (spec.textStyleId) {
+      try {
+        const style = await figma.getStyleByIdAsync(spec.textStyleId);
+        if (!style || style.type !== "TEXT") errors.push({ path: path + ".textStyleId", message: "text style not found: " + spec.textStyleId });
+      } catch (e) {
+        errors.push({ path: path + ".textStyleId", message: errMsg(e) });
+      }
+    }
+    await dryCheckVar(spec.fill, "COLOR", path + ".fill", errors);
+  }
+}
+
 async function buildNode(node, path, created) {
   if (!node || typeof node !== "object") throw new Error("node must be an object at " + path);
   if (node.type === "frame") return buildFrame(node, path, created);
@@ -650,9 +855,10 @@ async function buildNode(node, path, created) {
   throw new Error("unsupported node type at " + path + ": " + node.type);
 }
 
-async function buildFrame(node, path, created) {
-  const frame = figma.createFrame();
-  created.push(frame);
+// Set a frame's own auto-layout properties from the spec (no children, no
+// sizing). Shared by create (buildFrame) and update-selection. Only fields the
+// spec provides are written, so an update leaves unspecified properties as-is.
+async function configureFrame(frame, node, path) {
   if (node.name) frame.name = node.name;
   frame.layoutMode = node.layout;
 
@@ -667,6 +873,12 @@ async function buildFrame(node, path, created) {
   if (node.primaryAxisAlign) frame.primaryAxisAlignItems = node.primaryAxisAlign;
   if (node.counterAxisAlign) frame.counterAxisAlignItems = node.counterAxisAlign;
   if (node.fill !== undefined) await applyNodeFill(frame, node.fill, path + ".fill");
+}
+
+async function buildFrame(node, path, created) {
+  const frame = figma.createFrame();
+  created.push(frame);
+  await configureFrame(frame, node, path);
 
   // Build and append children, then size each child — sizing (esp. FILL) needs
   // the child to already be inside its auto-layout parent. The parent frame is
@@ -700,14 +912,14 @@ async function buildInstance(node, path, created) {
   return inst;
 }
 
-async function buildText(node, path, created) {
-  const t = figma.createText();
-  created.push(t);
+// Apply spec text properties to a text node (fresh or existing). Shared by
+// create (buildText) and update-selection.
+async function configureText(t, node, path) {
   if (node.name) t.name = node.name;
 
-  // Characters can only be written once the node's current font is loaded.
-  await loadFontSafe(t.fontName);
-  t.characters = typeof node.characters === "string" ? node.characters : "";
+  // Characters can only be written once the node's current font(s) are loaded.
+  await loadAllFontsOfText(t);
+  if (typeof node.characters === "string") t.characters = node.characters;
 
   if (node.textStyleId) {
     const style = await figma.getStyleByIdAsync(node.textStyleId);
@@ -719,6 +931,12 @@ async function buildText(node, path, created) {
   }
 
   if (node.fill !== undefined) await applyNodeFill(t, node.fill, path + ".fill");
+}
+
+async function buildText(node, path, created) {
+  const t = figma.createText();
+  created.push(t);
+  await configureText(t, node, path);
   return t;
 }
 

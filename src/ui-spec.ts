@@ -96,10 +96,22 @@ export interface TextNode {
 
 export type UiNode = FrameNode | InstanceNode | TextNode;
 
+export const TARGET_MODES = ["create", "into-selection", "update-selection"] as const;
+export type TargetMode = (typeof TARGET_MODES)[number];
+
+/** Where to apply the spec:
+ *  - create (default): a new screen at the viewport center.
+ *  - into-selection: append the root as a child of the selected auto-layout frame.
+ *  - update-selection: update the selected node to match the root. */
+export interface ApplyTarget {
+  mode: TargetMode;
+}
+
 /** What `apply_ui_spec` receives. */
 export interface UiSpec {
   version: number;
   validateOnly?: boolean;
+  target?: ApplyTarget;
   root: UiNode;
 }
 
@@ -120,7 +132,8 @@ export interface ValidationResult {
 // smuggling fields the plugin doesn't expect).
 // ---------------------------------------------------------------------------
 
-const SPEC_KEYS = ["version", "validateOnly", "root"];
+const SPEC_KEYS = ["version", "validateOnly", "target", "root"];
+const TARGET_KEYS = ["mode"];
 const FRAME_KEYS = [
   "type",
   "name",
@@ -167,6 +180,7 @@ export function validateUiSpec(input: unknown): ValidationResult {
   if ("validateOnly" in input && typeof input.validateOnly !== "boolean") {
     ctx.errors.push({ path: "validateOnly", message: "validateOnly must be a boolean" });
   }
+  if ("target" in input && input.target !== undefined) validateTarget(input.target, ctx);
   rejectUnknownKeys(input, SPEC_KEYS, "", ctx);
 
   if (!("root" in input) || input.root === undefined) {
@@ -198,6 +212,17 @@ function validateNode(value: unknown, path: string, ctx: Ctx): void {
         path: `${path}.type`,
         message: `unknown node type ${stringify(value.type)} (expected "frame" | "instance" | "text")`,
       });
+  }
+}
+
+function validateTarget(value: unknown, ctx: Ctx): void {
+  if (!isPlainObject(value)) {
+    ctx.errors.push({ path: "target", message: "target must be an object" });
+    return;
+  }
+  rejectUnknownKeys(value, TARGET_KEYS, "target", ctx);
+  if (!includesValue(TARGET_MODES, value.mode)) {
+    ctx.errors.push({ path: "target.mode", message: `target.mode must be one of ${TARGET_MODES.join(" | ")}` });
   }
 }
 
