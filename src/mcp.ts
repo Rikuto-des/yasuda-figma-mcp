@@ -482,7 +482,7 @@ server.registerTool(
   {
     title: "Apply a UI spec to Figma (write)",
     description:
-      "Create a screen in the open Figma file from a declarative UI spec (see docs/UI_SPEC.ja.md). Requires Figma Design mode. Builds from EXISTING local components and auto-layout — never raw rectangles or absolute coordinates. The model sends only this declarative data (never code); the plugin applies it deterministically and atomically. First observe the design system with yfigma_list_component_sets / yfigma_get_variable_defs to get real componentIds and tokens. Set validateOnly:true to check the spec against the live document without writing. Returns the created root/node ids, or a list of validation errors. (Current build: frame + instance only; text nodes, instance props, token binding and FILL sizing are reported as not-yet-supported.)",
+      "Create a screen in the open Figma file from a declarative UI spec (see docs/UI_SPEC.ja.md). Requires Figma Design mode. Builds from EXISTING local components and auto-layout — never raw rectangles or absolute coordinates. The model sends only this declarative data (never code); the plugin applies it deterministically and atomically. First observe the design system with yfigma_list_component_sets / yfigma_get_variable_defs to get real componentIds and tokens. Set validateOnly:true to check the spec against the live document without writing. Returns the created root/node ids, or a list of validation errors. Supports frame, instance (with variant/boolean/text props), text (with font loading), token binding for gap/padding/fill, and HUG/FIXED/FILL sizing. INSTANCE_SWAP props are not yet supported.",
     inputSchema: {
       version: z.literal(1).describe("Spec version. Must be 1."),
       validateOnly: z

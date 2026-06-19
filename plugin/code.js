@@ -531,10 +531,9 @@ async function handleWhoami() {
 // features not implemented yet. Application is atomic — any failure removes
 // everything created so the document is never left half-built.
 //
-// Milestone B scope: frame (auto-layout) + instance (no props), literal values
-// only. text nodes, instance props, token binding and "FILL" sizing are
-// rejected with a clear "coming in milestone C" message rather than silently
-// dropped.
+// Implemented: frame (auto-layout), instance (variant/boolean/text props),
+// text (with font loading), token binding (gap/padding/fill -> variables), and
+// HUG/FIXED/FILL sizing. INSTANCE_SWAP props are reported as not-yet-supported.
 // ---------------------------------------------------------------------------
 
 async function handleApplyUiSpec(params) {
@@ -543,7 +542,7 @@ async function handleApplyUiSpec(params) {
   // validateOnly: report against the live document without writing anything.
   if (params.validateOnly) {
     const errors = [];
-    await dryValidate(params.root, "root", errors);
+    await dryValidate(params.root, "root", true, errors);
     return { valid: errors.length === 0, errors, warnings: [] };
   }
 
@@ -551,6 +550,8 @@ async function handleApplyUiSpec(params) {
   let rootNode;
   try {
     rootNode = await buildNode(params.root, "root", created);
+    // Size the root now that it is on the page (FILL on the root is rejected here).
+    if (params.root && params.root.type === "frame") applyFrameSizing(rootNode, params.root, "root", true);
     centerInViewport(rootNode);
     figma.currentPage.selection = [rootNode];
     figma.viewport.scrollAndZoomIntoView([rootNode]);
@@ -574,62 +575,78 @@ async function handleApplyUiSpec(params) {
   };
 }
 
-// Features the builder does not implement yet. Returned as errors (not silently
-// ignored) so the agent knows to adjust the spec. buildNode throws on the first;
-// dryValidate collects them all.
-function unimplementedAt(node, path) {
-  const errs = [];
-  if (node.type === "text") {
-    errs.push({ path, message: 'text nodes are not supported yet (coming in milestone C)' });
-  } else if (node.type === "frame") {
-    if (isTokenRef(node.gap)) {
-      errs.push({ path: path + ".gap", message: 'token binding is not supported yet (coming in milestone C); use a number' });
-    }
-    if (paddingHasToken(node.padding)) {
-      errs.push({ path: path + ".padding", message: 'token binding is not supported yet (coming in milestone C); use numbers' });
-    }
-    if (isTokenRef(node.fill)) {
-      errs.push({ path: path + ".fill", message: 'color token binding is not supported yet (coming in milestone C); use a hex color or "NONE"' });
-    }
-    if (node.width === "FILL") {
-      errs.push({ path: path + ".width", message: '"FILL" sizing is not supported yet (coming in milestone C); use "HUG" or a number' });
-    }
-    if (node.height === "FILL") {
-      errs.push({ path: path + ".height", message: '"FILL" sizing is not supported yet (coming in milestone C); use "HUG" or a number' });
-    }
-  } else if (node.type === "instance") {
-    if (node.props && Object.keys(node.props).length > 0) {
-      errs.push({ path: path + ".props", message: 'instance props are not applied yet (coming in milestone C)' });
-    }
-  }
-  return errs;
-}
-
-async function dryValidate(node, path, errors) {
+// Read-only validation against the LIVE document. Mirrors what build* does, but
+// only resolves (components, props, variables, styles) without mutating, and
+// collects every error so the agent can fix the whole spec in one pass. The
+// validation rules themselves live in the shared resolve* helpers below, so dry
+// and build stay in sync.
+async function dryValidate(node, path, isRoot, errors) {
   if (!node || typeof node !== "object") {
     errors.push({ path, message: "node must be an object" });
     return;
   }
-  for (const e of unimplementedAt(node, path)) errors.push(e);
-
-  if (node.type === "instance") {
-    try {
-      await resolveComponent(node.componentId);
-    } catch (e) {
-      errors.push({ path: path + ".componentId", message: errMsg(e) });
+  if (node.type === "frame") {
+    if (isRoot && (node.width === "FILL" || node.height === "FILL")) {
+      errors.push({ path, message: '"FILL" needs an auto-layout parent; the root frame has none' });
     }
-  } else if (node.type === "frame" && Array.isArray(node.children)) {
-    for (let i = 0; i < node.children.length; i++) {
-      await dryValidate(node.children[i], path + ".children[" + i + "]", errors);
+    await dryCheckVar(node.gap, "FLOAT", path + ".gap", errors);
+    await dryCheckPaddingVars(node.padding, path + ".padding", errors);
+    await dryCheckVar(node.fill, "COLOR", path + ".fill", errors);
+    if (Array.isArray(node.children)) {
+      for (let i = 0; i < node.children.length; i++) {
+        await dryValidate(node.children[i], path + ".children[" + i + "]", false, errors);
+      }
+    }
+  } else if (node.type === "instance") {
+    try {
+      const resolved = await resolveComponent(node.componentId);
+      if (node.props && Object.keys(node.props).length > 0) {
+        resolveInstanceProps(resolved.defs, node.props, path); // throws on the first bad prop
+      }
+    } catch (e) {
+      errors.push({ path, message: errMsg(e) });
+    }
+  } else if (node.type === "text") {
+    if (node.textStyleId) {
+      try {
+        const style = await figma.getStyleByIdAsync(node.textStyleId);
+        if (!style || style.type !== "TEXT") {
+          errors.push({ path: path + ".textStyleId", message: "text style not found: " + node.textStyleId });
+        }
+      } catch (e) {
+        errors.push({ path: path + ".textStyleId", message: errMsg(e) });
+      }
+    }
+    await dryCheckVar(node.fill, "COLOR", path + ".fill", errors);
+  }
+}
+
+async function dryCheckVar(value, expectedType, path, errors) {
+  if (!isTokenRef(value)) return;
+  try {
+    await resolveVariable(value, expectedType, path);
+  } catch (e) {
+    errors.push({ path, message: errMsg(e) });
+  }
+}
+
+async function dryCheckPaddingVars(padding, path, errors) {
+  if (isTokenRef(padding)) {
+    await dryCheckVar(padding, "FLOAT", path, errors);
+    return;
+  }
+  if (padding && typeof padding === "object") {
+    for (const k of ["top", "right", "bottom", "left"]) {
+      if (isTokenRef(padding[k])) await dryCheckVar(padding[k], "FLOAT", path + "." + k, errors);
     }
   }
 }
 
 async function buildNode(node, path, created) {
-  const u = unimplementedAt(node, path);
-  if (u.length) throw new Error(u[0].message);
+  if (!node || typeof node !== "object") throw new Error("node must be an object at " + path);
   if (node.type === "frame") return buildFrame(node, path, created);
-  if (node.type === "instance") return buildInstance(node, created);
+  if (node.type === "instance") return buildInstance(node, path, created);
+  if (node.type === "text") return buildText(node, path, created);
   throw new Error("unsupported node type at " + path + ": " + node.type);
 }
 
@@ -639,36 +656,77 @@ async function buildFrame(node, path, created) {
   if (node.name) frame.name = node.name;
   frame.layoutMode = node.layout;
 
-  if (node.gap !== undefined) frame.itemSpacing = clampNum(node.gap, 0, 10000, 0);
-  if (node.padding !== undefined) applyPadding(frame, node.padding);
-  if (node.primaryAxisAlign) frame.primaryAxisAlignItems = node.primaryAxisAlign;
-  if (node.counterAxisAlign) frame.counterAxisAlignItems = node.counterAxisAlign;
-  if (node.fill !== undefined) applyFill(frame, node.fill);
-
-  // Build and append children BEFORE sizing, so HUG reflects their content.
-  if (Array.isArray(node.children)) {
-    for (let i = 0; i < node.children.length; i++) {
-      const child = await buildNode(node.children[i], path + ".children[" + i + "]", created);
-      frame.appendChild(child);
+  if (node.gap !== undefined) {
+    if (isTokenRef(node.gap)) {
+      frame.setBoundVariable("itemSpacing", await resolveVariable(node.gap, "FLOAT", path + ".gap"));
+    } else {
+      frame.itemSpacing = clampNum(node.gap, 0, 10000, 0);
     }
   }
+  if (node.padding !== undefined) await applyPadding(frame, node.padding, path + ".padding");
+  if (node.primaryAxisAlign) frame.primaryAxisAlignItems = node.primaryAxisAlign;
+  if (node.counterAxisAlign) frame.counterAxisAlignItems = node.counterAxisAlign;
+  if (node.fill !== undefined) await applyNodeFill(frame, node.fill, path + ".fill");
 
-  applyAxisSize(frame, "horizontal", node.width);
-  applyAxisSize(frame, "vertical", node.height);
+  // Build and append children, then size each child — sizing (esp. FILL) needs
+  // the child to already be inside its auto-layout parent. The parent frame is
+  // sized by ITS parent (or the root handler), not here.
+  if (Array.isArray(node.children)) {
+    for (let i = 0; i < node.children.length; i++) {
+      const childSpec = node.children[i];
+      const childPath = path + ".children[" + i + "]";
+      const child = await buildNode(childSpec, childPath, created);
+      frame.appendChild(child);
+      if (childSpec.type === "frame") applyFrameSizing(child, childSpec, childPath, false);
+    }
+  }
   return frame;
 }
 
-async function buildInstance(node, created) {
-  const comp = await resolveComponent(node.componentId); // throws on any problem
-  const inst = comp.createInstance();
+async function buildInstance(node, path, created) {
+  const resolved = await resolveComponent(node.componentId); // throws on any problem
+  const inst = resolved.comp.createInstance();
   created.push(inst);
   if (node.name) inst.name = node.name;
+
+  if (node.props && Object.keys(node.props).length > 0) {
+    const map = resolveInstanceProps(resolved.defs, node.props, path);
+    // Setting a TEXT property edits an inner text layer, which needs its font
+    // loaded first. Variant/boolean changes don't.
+    const needsFont = Object.keys(map).some((k) => resolved.defs[k] && resolved.defs[k].type === "TEXT");
+    if (needsFont) await loadInstanceTextFonts(inst);
+    inst.setProperties(map);
+  }
   return inst;
 }
 
-// Resolve a spec componentId to the local COMPONENT to instantiate. A
-// COMPONENT_SET resolves to its default variant. Rejects non-components and
-// remote (library) components — MVP is local-only.
+async function buildText(node, path, created) {
+  const t = figma.createText();
+  created.push(t);
+  if (node.name) t.name = node.name;
+
+  // Characters can only be written once the node's current font is loaded.
+  await loadFontSafe(t.fontName);
+  t.characters = typeof node.characters === "string" ? node.characters : "";
+
+  if (node.textStyleId) {
+    const style = await figma.getStyleByIdAsync(node.textStyleId);
+    if (!style || style.type !== "TEXT") throw new Error("text style not found: " + node.textStyleId);
+    await loadFontSafe(style.fontName); // the style switches the font; load it too
+    await t.setTextStyleIdAsync(node.textStyleId);
+  } else if (node.fontSize !== undefined) {
+    t.fontSize = clampNum(node.fontSize, 1, 10000, 16);
+  }
+
+  if (node.fill !== undefined) await applyNodeFill(t, node.fill, path + ".fill");
+  return t;
+}
+
+// Resolve a spec componentId to { comp, defs }: the local COMPONENT to
+// instantiate plus its property definitions (used to resolve props). A
+// COMPONENT_SET resolves to its default variant, but its definitions come from
+// the SET (variant props live there). Rejects non-components and remote
+// (library) components — MVP is local-only.
 async function resolveComponent(componentId) {
   const node = await figma.getNodeByIdAsync(componentId);
   if (!node) throw new Error("component not found: " + componentId);
@@ -678,15 +736,84 @@ async function resolveComponent(componentId) {
   if (node.remote) {
     throw new Error("component " + componentId + " is from a remote library; only local components are supported");
   }
+  let defs = {};
+  try {
+    defs = node.componentPropertyDefinitions || {};
+  } catch (e) {
+    defs = {};
+  }
   if (node.type === "COMPONENT_SET") {
     const dv = node.defaultVariant;
     if (!dv) throw new Error("component set " + componentId + " has no default variant");
-    return dv;
+    return { comp: dv, defs };
   }
-  return node;
+  return { comp: node, defs };
 }
 
-function applyPadding(frame, padding) {
+// Resolve spec props (friendly names) to an exact-key setProperties() map,
+// validating each value against the component's definitions. Throws on the first
+// problem with a path-prefixed message.
+function resolveInstanceProps(defs, props, path) {
+  const map = {};
+  for (const specName of Object.keys(props)) {
+    const key = resolvePropKey(defs, specName, path);
+    const def = defs[key];
+    const value = props[specName];
+    const where = path + ".props." + specName;
+    if (def.type === "VARIANT") {
+      const opts = def.variantOptions || [];
+      const sval = String(value);
+      if (opts.indexOf(sval) === -1) {
+        throw new Error(where + ': "' + sval + '" is not a valid value (options: ' + opts.join(", ") + ")");
+      }
+      map[key] = sval;
+    } else if (def.type === "BOOLEAN") {
+      if (typeof value !== "boolean") throw new Error(where + ": expected a boolean");
+      map[key] = value;
+    } else if (def.type === "TEXT") {
+      map[key] = String(value);
+    } else if (def.type === "INSTANCE_SWAP") {
+      throw new Error(where + ": INSTANCE_SWAP properties are not supported yet");
+    } else {
+      throw new Error(where + ": unsupported property type " + def.type);
+    }
+  }
+  return map;
+}
+
+// Map a friendly prop name to the exact Figma key. VARIANT keys are the plain
+// name; others are "name#id". Accepts an exact key directly; otherwise matches
+// on friendly name, erroring on none or on ambiguity.
+function resolvePropKey(defs, specName, path) {
+  if (Object.prototype.hasOwnProperty.call(defs, specName)) return specName;
+  const matches = Object.keys(defs).filter((k) => friendlyPropName(k) === specName);
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    const available = Object.keys(defs).map(friendlyPropName).join(", ");
+    throw new Error(path + '.props: no property named "' + specName + '" (available: ' + available + ")");
+  }
+  throw new Error(path + '.props: property "' + specName + '" is ambiguous; use the exact key (one of: ' + matches.join(", ") + ")");
+}
+
+// Resolve a token reference to a Figma variable of the expected resolved type.
+async function resolveVariable(ref, expectedType, path) {
+  const v = await figma.variables.getVariableByIdAsync(ref.var);
+  if (!v) throw new Error(path + ": variable not found: " + ref.var);
+  if (v.resolvedType !== expectedType) {
+    throw new Error(path + ": variable " + (ref.name || v.name) + " is " + v.resolvedType + ", expected " + expectedType);
+  }
+  return v;
+}
+
+async function applyPadding(frame, padding, path) {
+  if (isTokenRef(padding)) {
+    const v = await resolveVariable(padding, "FLOAT", path);
+    frame.setBoundVariable("paddingTop", v);
+    frame.setBoundVariable("paddingRight", v);
+    frame.setBoundVariable("paddingBottom", v);
+    frame.setBoundVariable("paddingLeft", v);
+    return;
+  }
   if (typeof padding === "number") {
     const v = clampNum(padding, 0, 10000, 0);
     frame.paddingTop = v;
@@ -696,31 +823,59 @@ function applyPadding(frame, padding) {
     return;
   }
   if (padding && typeof padding === "object") {
-    if (padding.top !== undefined) frame.paddingTop = clampNum(padding.top, 0, 10000, 0);
-    if (padding.right !== undefined) frame.paddingRight = clampNum(padding.right, 0, 10000, 0);
-    if (padding.bottom !== undefined) frame.paddingBottom = clampNum(padding.bottom, 0, 10000, 0);
-    if (padding.left !== undefined) frame.paddingLeft = clampNum(padding.left, 0, 10000, 0);
+    await applyPaddingSide(frame, "paddingTop", padding.top, path + ".top");
+    await applyPaddingSide(frame, "paddingRight", padding.right, path + ".right");
+    await applyPaddingSide(frame, "paddingBottom", padding.bottom, path + ".bottom");
+    await applyPaddingSide(frame, "paddingLeft", padding.left, path + ".left");
   }
 }
 
-function applyFill(frame, fill) {
+async function applyPaddingSide(frame, field, value, path) {
+  if (value === undefined) return;
+  if (isTokenRef(value)) {
+    frame.setBoundVariable(field, await resolveVariable(value, "FLOAT", path));
+  } else {
+    frame[field] = clampNum(value, 0, 10000, 0);
+  }
+}
+
+// Set a node's fill from a hex string, "NONE", or a COLOR token reference. Used
+// for both frames and text.
+async function applyNodeFill(node, fill, path) {
   if (fill === "NONE") {
-    frame.fills = [];
+    node.fills = [];
+    return;
+  }
+  if (isTokenRef(fill)) {
+    const v = await resolveVariable(fill, "COLOR", path);
+    const base = { type: "SOLID", color: { r: 0, g: 0, b: 0 } };
+    node.fills = [figma.variables.setBoundVariableForPaint(base, "color", v)];
     return;
   }
   if (typeof fill === "string") {
     const rgb = hexToRgb(fill);
-    if (rgb) frame.fills = [{ type: "SOLID", color: { r: rgb.r, g: rgb.g, b: rgb.b }, opacity: rgb.a }];
+    if (rgb) node.fills = [{ type: "SOLID", color: { r: rgb.r, g: rgb.g, b: rgb.b }, opacity: rgb.a }];
   }
-  // token fills are rejected upstream (unimplementedAt)
 }
 
-function applyAxisSize(frame, axis, value) {
+function applyFrameSizing(frame, spec, path, isRoot) {
+  applyAxisSize(frame, "horizontal", spec.width, path + ".width", isRoot);
+  applyAxisSize(frame, "vertical", spec.height, path + ".height", isRoot);
+}
+
+function applyAxisSize(frame, axis, value, path, isRoot) {
   const horiz = axis === "horizontal";
-  // undefined or "HUG" -> hug contents (FILL is rejected upstream for now).
   if (value === undefined || value === "HUG") {
     if (horiz) frame.layoutSizingHorizontal = "HUG";
     else frame.layoutSizingVertical = "HUG";
+    return;
+  }
+  if (value === "FILL") {
+    if (isRoot) {
+      throw new Error(path + ': "FILL" needs an auto-layout parent; the root frame has none — use "HUG" or a number');
+    }
+    if (horiz) frame.layoutSizingHorizontal = "FILL";
+    else frame.layoutSizingVertical = "FILL";
     return;
   }
   // number -> fixed size on that axis.
@@ -743,12 +898,40 @@ function isTokenRef(v) {
   return !!v && typeof v === "object" && !Array.isArray(v) && "var" in v;
 }
 
-function paddingHasToken(p) {
-  if (isTokenRef(p)) return true;
-  if (p && typeof p === "object" && !Array.isArray(p)) {
-    for (const k of ["top", "right", "bottom", "left"]) if (isTokenRef(p[k])) return true;
+// Load a font, tolerating the default/mixed case (fresh text nodes carry a
+// single concrete font, but guard anyway).
+async function loadFontSafe(font) {
+  if (!font || font === figma.mixed) {
+    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+    return;
   }
-  return false;
+  await figma.loadFontAsync(font);
+}
+
+// Load every font used by an instance's text layers, so setting a TEXT property
+// (which edits those layers) won't fail on an unloaded font.
+async function loadInstanceTextFonts(inst) {
+  let texts = [];
+  try {
+    texts = inst.findAllWithCriteria
+      ? inst.findAllWithCriteria({ types: ["TEXT"] })
+      : inst.findAll((n) => n.type === "TEXT");
+  } catch (e) {
+    texts = [];
+  }
+  for (const t of texts) await loadAllFontsOfText(t);
+}
+
+async function loadAllFontsOfText(t) {
+  try {
+    const len = t.characters.length;
+    const fonts = len > 0 ? t.getRangeAllFontNames(0, len) : [t.fontName];
+    for (const f of fonts) {
+      if (f && f !== figma.mixed) await figma.loadFontAsync(f);
+    }
+  } catch (e) {
+    // best-effort; setProperties will surface a clear error if a font is missing
+  }
 }
 
 function hexToRgb(hex) {

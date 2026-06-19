@@ -177,15 +177,18 @@ spec 全体を修復できる。
 |---|---|
 | `frame`（オートレイアウト・literal gap/padding/aligns） | ✅ B |
 | `frame` の `width`/`height`：`"HUG"`・数値(FIXED) | ✅ B |
-| `instance`（ローカル COMPONENT / COMPONENT_SET 既定バリアント、props なし） | ✅ B |
+| `instance`（ローカル COMPONENT / COMPONENT_SET 既定バリアント） | ✅ B |
 | `fill`：hex・`"NONE"` | ✅ B |
 | `validateOnly`（実ドキュメント照合のドライラン） | ✅ B |
-| `instance` の `props`（バリアント・TEXT 等） | ⏳ C |
-| `text` ノード（フォント読込） | ⏳ C |
-| トークン参照 `{var}`（gap/padding/fill のバインド） | ⏳ C |
-| `width`/`height` の `"FILL"` | ⏳ C |
+| `instance` の `props`（VARIANT・BOOLEAN・TEXT。フレンドリ名解決） | ✅ C |
+| `text` ノード（フォント読込・textStyle・fontSize） | ✅ C |
+| トークン参照 `{var}`（gap/padding/fill を変数にバインド） | ✅ C |
+| `width`/`height` の `"FILL"`（ルート以外） | ✅ C |
+| `instance` の `props`：`INSTANCE_SWAP` | ⏳ 未対応（明確にエラー） |
+| チームライブラリ部品（`importComponentByKeyAsync`） | ⏳ D |
+| 冪等性 / その場更新 | ⏳ D |
 
 ---
 
-**次の一歩（C）：** props（`setProperties`）／`text`（`loadFontAsync`）／トークンバインド
-（`setBoundVariable`）を実装し、未実装エラーを順次解消する。
+**次の一歩（D）：** ネスト/レスポンシブの拡充、チームライブラリ部品、`INSTANCE_SWAP`、
+冪等性、`integrations/copilot/yfigma.prompt.md` へエージェントループ追記。
