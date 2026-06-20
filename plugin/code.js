@@ -154,6 +154,7 @@ function metaNode(node, depth, maxDepth) {
 // ---------------------------------------------------------------------------
 
 async function handleDesignContext(params) {
+  resetVarCache();
   const nodes = await resolveTargetNodes(params.target);
   const depth = typeof params.depth === "number" ? params.depth : 4;
   const out = [];
@@ -217,11 +218,12 @@ async function ctxNode(node, depth, maxDepth) {
 // ---------------------------------------------------------------------------
 
 async function handleVariableDefs(params) {
+  resetVarCache();
   const collections = {};
   async function addCollection(id) {
     if (!id || collections[id]) return;
     try {
-      const c = await figma.variables.getVariableCollectionByIdAsync(id);
+      const c = await withTimeout(figma.variables.getVariableCollectionByIdAsync(id), 2500, null);
       if (c) collections[id] = { id: c.id, name: c.name, modes: c.modes, defaultModeId: c.defaultModeId };
     } catch (e) {
       // ignore
@@ -248,16 +250,17 @@ async function handleVariableDefs(params) {
   const nodes = await resolveTargetNodes(params.target);
   const ids = {};
   collectBoundVariableIds(nodes, ids);
+  const map = await localVarMap(); // bulk, instead of one (hang-prone) lookup per id
   const variables = [];
   for (const id of Object.keys(ids)) {
-    try {
-      const v = await figma.variables.getVariableByIdAsync(id);
-      if (v) {
-        variables.push(varInfo(v));
-        await addCollection(v.variableCollectionId);
-      }
-    } catch (e) {
-      // ignore
+    const v = map[id];
+    if (v) {
+      variables.push(varInfo(v));
+      await addCollection(v.variableCollectionId);
+    } else {
+      // Bound to a remote/library variable we can't resolve locally — still
+      // report the id so the binding isn't lost.
+      variables.push({ id, name: undefined, remote: true });
     }
   }
   return { scope: "target", count: variables.length, variables, collections: values(collections) };
@@ -493,11 +496,14 @@ function endpointId(ep) {
 // ---------------------------------------------------------------------------
 
 async function handleDocumentInfo() {
-  const pages = figma.root.children.map((p) => ({
-    id: p.id,
-    name: p.name,
-    childCount: "children" in p ? p.children.length : 0,
-  }));
+  // Under documentAccess: "dynamic-page", reading a non-current page's `children`
+  // throws until that page is loaded — so only count the current page's children.
+  const curId = figma.currentPage.id;
+  const pages = figma.root.children.map((p) => {
+    const o = { id: p.id, name: p.name };
+    if (p.id === curId && "children" in p) o.childCount = p.children.length;
+    return o;
+  });
   return {
     fileName: figma.root.name,
     editorType: figma.editorType,
@@ -1405,11 +1411,44 @@ function textObj(node) {
   };
 }
 
+// Time-box an async lookup so a hanging Figma API call degrades gracefully
+// instead of stalling the whole serialization. Under documentAccess:
+// "dynamic-page", getVariableByIdAsync / getMainComponentAsync for library-backed
+// nodes can take many seconds (or effectively hang), which previously made
+// get_design_context time out on real design-system files.
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([promise, new Promise((res) => setTimeout(() => res(fallback), ms))]);
+}
+
+// id -> Variable map, built ONCE per read request from a single
+// getLocalVariablesAsync() call, instead of one getVariableByIdAsync per node
+// (which is slow and can hang). Library/remote variables aren't local, so their
+// names won't resolve from here — callers still return the raw id for those.
+let _localVarMapPromise = null;
+function resetVarCache() {
+  _localVarMapPromise = null;
+}
+function localVarMap() {
+  if (!_localVarMapPromise) {
+    _localVarMapPromise = (async () => {
+      const map = Object.create(null);
+      try {
+        const vars = await withTimeout(figma.variables.getLocalVariablesAsync(), 8000, []);
+        for (const v of vars) map[v.id] = v;
+      } catch (e) {
+        // ignore
+      }
+      return map;
+    })();
+  }
+  return _localVarMapPromise;
+}
+
 async function componentObj(node) {
   if (node.type === "INSTANCE") {
     let main = null;
     try {
-      main = await node.getMainComponentAsync();
+      main = await withTimeout(node.getMainComponentAsync(), 2500, null);
     } catch (e) {
       // ignore
     }
@@ -1438,22 +1477,21 @@ function serializeComponentProps(props) {
 async function boundVarsObj(node) {
   const bv = node.boundVariables;
   if (!bv || typeof bv !== "object") return undefined;
+  const map = await localVarMap(); // one bulk lookup, cached for the whole request
   const out = {};
   for (const prop of Object.keys(bv)) {
     const entry = bv[prop];
     const arr = Array.isArray(entry) ? entry : [entry];
-    const names = [];
+    const refs = [];
     for (const a of arr) {
       if (a && a.id) {
-        try {
-          const v = await figma.variables.getVariableByIdAsync(a.id);
-          if (v) names.push(v.name);
-        } catch (e) {
-          // ignore
-        }
+        const v = map[a.id];
+        // Always include the raw id (raw data); add the name when it's a local
+        // variable. Remote/library bindings keep just the id.
+        refs.push(v ? { id: a.id, name: v.name } : { id: a.id });
       }
     }
-    if (names.length) out[prop] = names.length === 1 ? names[0] : names;
+    if (refs.length) out[prop] = refs.length === 1 ? refs[0] : refs;
   }
   return Object.keys(out).length ? out : undefined;
 }
