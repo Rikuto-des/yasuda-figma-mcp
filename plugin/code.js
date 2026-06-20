@@ -192,6 +192,7 @@ function metaNode(node, depth, maxDepth) {
 
 async function handleDesignContext(params) {
   resetVarCache();
+  resetStyleCache();
   const nodes = await resolveTargetNodes(params.target);
   const depth = typeof params.depth === "number" ? params.depth : 4;
   const out = [];
@@ -210,12 +211,44 @@ async function ctxNode(node, depth, maxDepth) {
   }
   if ("opacity" in node && node.opacity !== 1) o.opacity = round(node.opacity);
   if ("rotation" in node && node.rotation) o.rotation = round(node.rotation);
+  if ("blendMode" in node && node.blendMode && node.blendMode !== "NORMAL" && node.blendMode !== "PASS_THROUGH") {
+    o.blendMode = node.blendMode;
+  }
   if ("constraints" in node) o.constraints = node.constraints;
+  if ("clipsContent" in node) o.clipsContent = node.clipsContent;
+  if ("isMask" in node && node.isMask) {
+    o.isMask = true;
+    if ("maskType" in node && node.maskType) o.maskType = node.maskType;
+  }
+  if ("locked" in node && node.locked) o.locked = true;
+  // Full transform matrix relative to the parent — only when rotated/skewed
+  // (otherwise bounds + x/y already convey position).
+  if ("relativeTransform" in node && node.rotation) o.relativeTransform = node.relativeTransform;
+  // Prototyping interactions (compact summary).
+  if ("reactions" in node && Array.isArray(node.reactions) && node.reactions.length) {
+    o.reactions = node.reactions.map((r) => {
+      const acts = r.actions || (r.action ? [r.action] : []);
+      return {
+        trigger: r.trigger ? r.trigger.type : undefined,
+        actions: acts.map((a) => ({ type: a.type, destinationId: a.destinationId, navigation: a.navigation })),
+      };
+    });
+  }
 
   const layout = layoutObj(node);
   if (layout) o.layout = layout;
+  if ("layoutGrids" in node && node.layoutGrids && node.layoutGrids.length) o.layoutGrids = gridsToArr(node.layoutGrids);
   if ("layoutSizingHorizontal" in node) {
     o.layoutSizing = { horizontal: node.layoutSizingHorizontal, vertical: node.layoutSizingVertical };
+  }
+  // Per-child auto-layout behaviour (relative to the parent's auto-layout).
+  if ("layoutAlign" in node && node.layoutAlign && node.layoutAlign !== "INHERIT") o.layoutAlign = node.layoutAlign;
+  if ("layoutGrow" in node && node.layoutGrow) o.layoutGrow = node.layoutGrow;
+  if ("layoutPositioning" in node && node.layoutPositioning && node.layoutPositioning !== "AUTO") {
+    o.layoutPositioning = node.layoutPositioning;
+  }
+  for (const k of ["minWidth", "maxWidth", "minHeight", "maxHeight"]) {
+    if (k in node && typeof node[k] === "number") o[k] = round(node[k]);
   }
 
   if ("fills" in node) {
@@ -225,11 +258,31 @@ async function ctxNode(node, depth, maxDepth) {
   if ("strokes" in node && node.strokes && node.strokes.length) {
     o.strokes = paintsToArr(node.strokes);
     o.strokeWeight = node.strokeWeight === figma.mixed ? "mixed" : node.strokeWeight;
+    if (node.strokeWeight === figma.mixed) {
+      o.strokeWeights = {
+        top: node.strokeTopWeight,
+        right: node.strokeRightWeight,
+        bottom: node.strokeBottomWeight,
+        left: node.strokeLeftWeight,
+      };
+    }
     o.strokeAlign = node.strokeAlign;
+    if ("strokeCap" in node && node.strokeCap && node.strokeCap !== figma.mixed && node.strokeCap !== "NONE") {
+      o.strokeCap = node.strokeCap;
+    }
+    if ("strokeJoin" in node && node.strokeJoin && node.strokeJoin !== figma.mixed) o.strokeJoin = node.strokeJoin;
+    if ("dashPattern" in node && node.dashPattern && node.dashPattern.length) o.dashPattern = node.dashPattern;
   }
   if ("effects" in node && node.effects && node.effects.length) o.effects = effectsToArr(node.effects);
   const cr = cornerRadius(node);
   if (cr !== undefined) o.cornerRadius = cr;
+  if ("cornerSmoothing" in node && node.cornerSmoothing) o.cornerSmoothing = round(node.cornerSmoothing);
+
+  const styles = await stylesObj(node);
+  if (styles) o.styles = styles;
+  if ("exportSettings" in node && node.exportSettings && node.exportSettings.length) {
+    o.exportSettings = node.exportSettings.map((s) => ({ format: s.format, suffix: s.suffix, constraint: s.constraint }));
+  }
 
   if (node.type === "TEXT") o.text = textObj(node);
 
@@ -1379,6 +1432,7 @@ function rgbToHex(c) {
 function paintToObj(p) {
   if (!p) return null;
   const o = { type: p.type, visible: p.visible !== false, opacity: typeof p.opacity === "number" ? p.opacity : 1 };
+  if (p.blendMode && p.blendMode !== "NORMAL") o.blendMode = p.blendMode;
   if (p.type === "SOLID") {
     o.color = rgbToHex(p.color);
   } else if (typeof p.type === "string" && p.type.indexOf("GRADIENT") === 0) {
@@ -1387,9 +1441,18 @@ function paintToObj(p) {
       color: rgbToHex(s.color),
       a: round(s.color.a),
     }));
+    if (p.gradientTransform) o.gradientTransform = p.gradientTransform;
   } else if (p.type === "IMAGE") {
     o.scaleMode = p.scaleMode;
     o.imageHash = p.imageHash;
+    if (p.imageTransform) o.imageTransform = p.imageTransform;
+    if (typeof p.scalingFactor === "number") o.scalingFactor = p.scalingFactor;
+    if (typeof p.rotation === "number" && p.rotation) o.rotation = p.rotation;
+    if (p.filters) o.filters = p.filters;
+  }
+  // Variable bindings on the paint itself (e.g. a fill colour bound to a token).
+  if (p.boundVariables && typeof p.boundVariables === "object" && Object.keys(p.boundVariables).length) {
+    o.boundVariables = p.boundVariables;
   }
   return o;
 }
@@ -1411,6 +1474,8 @@ function effectsToArr(effects) {
     }
     if (e.offset) o.offset = { x: round(e.offset.x), y: round(e.offset.y) };
     if (typeof e.spread === "number") o.spread = e.spread;
+    if (e.blendMode && e.blendMode !== "NORMAL") o.blendMode = e.blendMode;
+    if (typeof e.showShadowBehindNode === "boolean") o.showShadowBehindNode = e.showShadowBehindNode;
     return o;
   });
 }
@@ -1430,7 +1495,7 @@ function cornerRadius(node) {
 
 function layoutObj(node) {
   if (!("layoutMode" in node) || node.layoutMode === "NONE") return undefined;
-  return {
+  const o = {
     mode: node.layoutMode,
     primaryAxisAlignItems: node.primaryAxisAlignItems,
     counterAxisAlignItems: node.counterAxisAlignItems,
@@ -1445,6 +1510,13 @@ function layoutObj(node) {
       left: node.paddingLeft,
     },
   };
+  if (node.layoutWrap === "WRAP" && typeof node.counterAxisSpacing === "number") o.counterAxisSpacing = node.counterAxisSpacing;
+  if ("counterAxisAlignContent" in node && node.counterAxisAlignContent && node.counterAxisAlignContent !== "AUTO") {
+    o.counterAxisAlignContent = node.counterAxisAlignContent;
+  }
+  if ("itemReverseZIndex" in node && node.itemReverseZIndex) o.itemReverseZIndex = true;
+  if ("strokesIncludedInLayout" in node && node.strokesIncludedInLayout) o.strokesIncludedInLayout = true;
+  return o;
 }
 
 function mixedOr(v) {
@@ -1452,7 +1524,7 @@ function mixedOr(v) {
 }
 
 function textObj(node) {
-  return {
+  const o = {
     characters: node.characters,
     fontSize: mixedOr(node.fontSize),
     fontName: mixedOr(node.fontName),
@@ -1464,6 +1536,59 @@ function textObj(node) {
     textCase: mixedOr(node.textCase),
     textDecoration: mixedOr(node.textDecoration),
   };
+  if ("paragraphSpacing" in node && node.paragraphSpacing) o.paragraphSpacing = node.paragraphSpacing;
+  if ("paragraphIndent" in node && node.paragraphIndent) o.paragraphIndent = node.paragraphIndent;
+  if ("textAutoResize" in node) o.textAutoResize = node.textAutoResize;
+  if ("textTruncation" in node && node.textTruncation && node.textTruncation !== "DISABLED") o.textTruncation = node.textTruncation;
+  if ("maxLines" in node && node.maxLines != null) o.maxLines = node.maxLines;
+  if ("leadingTrim" in node && node.leadingTrim && node.leadingTrim !== "NONE") o.leadingTrim = node.leadingTrim;
+  if ("hyperlink" in node && node.hyperlink && node.hyperlink !== figma.mixed) o.hyperlink = node.hyperlink;
+
+  // When the text mixes styles, break it into per-range segments so the detail
+  // isn't lost behind "mixed". getStyledTextSegments is synchronous.
+  const isMixed =
+    node.fontSize === figma.mixed ||
+    node.fontName === figma.mixed ||
+    node.fontWeight === figma.mixed ||
+    node.fills === figma.mixed ||
+    node.textDecoration === figma.mixed ||
+    node.letterSpacing === figma.mixed ||
+    node.lineHeight === figma.mixed;
+  if (isMixed && typeof node.getStyledTextSegments === "function") {
+    try {
+      const segs = node.getStyledTextSegments([
+        "fontSize",
+        "fontName",
+        "fontWeight",
+        "fills",
+        "textDecoration",
+        "textCase",
+        "letterSpacing",
+        "lineHeight",
+        "hyperlink",
+      ]);
+      o.segments = segs.map((s) => {
+        const so = {
+          start: s.start,
+          end: s.end,
+          characters: node.characters.slice(s.start, s.end),
+          fontSize: s.fontSize,
+          fontName: s.fontName,
+          fontWeight: s.fontWeight,
+          textDecoration: s.textDecoration,
+          textCase: s.textCase,
+          letterSpacing: s.letterSpacing,
+          lineHeight: s.lineHeight,
+        };
+        if (s.fills) so.fills = paintsToArr(s.fills);
+        if (s.hyperlink) so.hyperlink = s.hyperlink;
+        return so;
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+  return o;
 }
 
 // Time-box an async lookup so a hanging Figma API call degrades gracefully
@@ -1499,6 +1624,81 @@ function localVarMap() {
   return _localVarMapPromise;
 }
 
+// id -> { name, type } map of local paint/text/effect/grid styles, built once
+// per request (same approach as localVarMap — avoids a hang-prone
+// getStyleByIdAsync per node).
+let _localStyleMapPromise = null;
+function resetStyleCache() {
+  _localStyleMapPromise = null;
+}
+function localStyleMap() {
+  if (!_localStyleMapPromise) {
+    _localStyleMapPromise = (async () => {
+      const map = Object.create(null);
+      const loaders = [
+        ["PAINT", figma.getLocalPaintStylesAsync],
+        ["TEXT", figma.getLocalTextStylesAsync],
+        ["EFFECT", figma.getLocalEffectStylesAsync],
+        ["GRID", figma.getLocalGridStylesAsync],
+      ];
+      for (const pair of loaders) {
+        try {
+          const styles = await withTimeout(pair[1].call(figma), 4000, []);
+          for (const s of styles) map[s.id] = { name: s.name, type: pair[0] };
+        } catch (e) {
+          // ignore
+        }
+      }
+      return map;
+    })();
+  }
+  return _localStyleMapPromise;
+}
+
+// Resolve a style id to { id, name } (name when it's a local style).
+async function styleRef(id) {
+  if (!id || id === figma.mixed) return undefined;
+  const map = await localStyleMap();
+  const s = map[id];
+  return s ? { id: id, name: s.name } : { id: id };
+}
+
+// Shared-style references applied to a node (fill/stroke/effect/grid/text).
+async function stylesObj(node) {
+  const out = {};
+  const pairs = [
+    ["fillStyleId", "fill"],
+    ["strokeStyleId", "stroke"],
+    ["effectStyleId", "effect"],
+    ["gridStyleId", "grid"],
+  ];
+  for (const p of pairs) {
+    if (p[0] in node && node[p[0]] && node[p[0]] !== figma.mixed) {
+      const r = await styleRef(node[p[0]]);
+      if (r) out[p[1]] = r;
+    }
+  }
+  if (node.type === "TEXT" && "textStyleId" in node && node.textStyleId && node.textStyleId !== figma.mixed) {
+    const r = await styleRef(node.textStyleId);
+    if (r) out.text = r;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// Layout (design) grids on a frame.
+function gridsToArr(grids) {
+  return grids.map((g) => {
+    const o = { pattern: g.pattern, visible: g.visible !== false };
+    if (typeof g.sectionSize === "number") o.sectionSize = g.sectionSize;
+    if (typeof g.gutterSize === "number") o.gutterSize = g.gutterSize;
+    if (typeof g.count === "number") o.count = g.count;
+    if (g.alignment) o.alignment = g.alignment;
+    if (typeof g.offset === "number") o.offset = g.offset;
+    if (g.color) o.color = rgbToHex(g.color);
+    return o;
+  });
+}
+
 async function componentObj(node) {
   if (node.type === "INSTANCE") {
     let main = null;
@@ -1518,6 +1718,10 @@ async function componentObj(node) {
       description: meta ? meta.description || undefined : undefined,
       documentationLinks: meta ? docLinks(meta) : undefined,
       properties: node.componentProperties ? serializeComponentProps(node.componentProperties) : undefined,
+      overrides:
+        Array.isArray(node.overrides) && node.overrides.length
+          ? node.overrides.map((ov) => ({ id: ov.id, fields: ov.overriddenFields }))
+          : undefined,
     };
   }
   if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
