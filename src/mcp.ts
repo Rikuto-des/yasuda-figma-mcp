@@ -261,6 +261,48 @@ server.registerTool(
   },
 );
 
+// 1b) Export node — vector SVG (default) or raster PNG/JPG, rendered locally.
+server.registerTool(
+  "yfigma_export_node",
+  {
+    title: "Export a Figma node as SVG/PNG/JPG (local, no upload)",
+    description:
+      "Export the selection or a node as vector SVG markup (default) or a raster PNG/JPG. Produced locally via the same engine as right-click -> Copy as SVG/PNG and returned inline; nothing is uploaded. Use SVG for icons/vectors (the markup is returned as text), and PNG/JPG for raster assets or image fills.",
+    inputSchema: {
+      ...nodeTargetShape,
+      format: z.enum(["SVG", "PNG", "JPG"]).optional().describe("Export format (default SVG)."),
+      scale: z.number().min(1).max(4).optional().describe("Raster export scale 1-4 (default 2; ignored for SVG)."),
+    },
+  },
+  async (args) => {
+    try {
+      const result = (await bridge.request("export_node", {
+        target: buildTarget(args),
+        format: args.format ?? "SVG",
+        scale: args.scale ?? 2,
+      })) as { assets: Array<Record<string, any>> };
+
+      const assets = result.assets ?? [];
+      if (assets.length === 0) return errorResult("No exportable node was found for the given target.");
+
+      const content: CallToolResult["content"] = [];
+      for (const a of assets) {
+        if (a.format === "SVG") {
+          const svg = Buffer.from(a.svgBase64, "base64").toString("utf8");
+          content.push({ type: "text", text: `${a.name} (${a.nodeId}) — SVG` });
+          content.push({ type: "text", text: svg });
+        } else {
+          content.push({ type: "text", text: `${a.name} (${a.nodeId}) — ${a.format} ${a.width}x${a.height}` });
+          content.push({ type: "image", data: a.data, mimeType: a.mimeType });
+        }
+      }
+      return { content };
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
 // 2) Metadata — compact node tree (ids, names, types, geometry).
 server.registerTool(
   "yfigma_get_metadata",

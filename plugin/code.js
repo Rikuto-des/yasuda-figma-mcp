@@ -54,6 +54,8 @@ async function handleRequest(op, params) {
   switch (op) {
     case "screenshot":
       return handleScreenshot(params);
+    case "export_node":
+      return handleExportNode(params);
     case "metadata":
       return handleMetadata(params);
     case "design_context":
@@ -119,6 +121,41 @@ async function handleScreenshot(params) {
   }
   if (!images.length) throw new Error("No exportable node found (selection empty or node not exportable).");
   return { images };
+}
+
+// ---------------------------------------------------------------------------
+// export_node — vector SVG (default) or raster PNG/JPG of a node, produced
+// LOCALLY via exportAsync and returned inline (no upload). SVG bytes are passed
+// as base64 (the plugin sandbox lacks a reliable UTF-8 decoder); the MCP server
+// decodes them back to SVG markup.
+// ---------------------------------------------------------------------------
+
+async function handleExportNode(params) {
+  const nodes = await resolveTargetNodes(params.target);
+  const format = String(params.format || "SVG").toUpperCase();
+  const scale = clampNum(params.scale, 1, 4, 2);
+  const assets = [];
+  for (const node of nodes) {
+    if (!("exportAsync" in node)) continue;
+    if (format === "SVG") {
+      const bytes = await node.exportAsync({ format: "SVG" });
+      assets.push({ nodeId: node.id, name: node.name, format: "SVG", svgBase64: figma.base64Encode(bytes) });
+    } else {
+      const fmt = format === "JPG" ? "JPG" : "PNG";
+      const bytes = await node.exportAsync({ format: fmt, constraint: { type: "SCALE", value: scale } });
+      assets.push({
+        nodeId: node.id,
+        name: node.name,
+        format: fmt,
+        mimeType: fmt === "JPG" ? "image/jpeg" : "image/png",
+        data: figma.base64Encode(bytes),
+        width: Math.round(node.width),
+        height: Math.round(node.height),
+      });
+    }
+  }
+  if (!assets.length) throw new Error("No exportable node found for the target.");
+  return { assets };
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +266,7 @@ async function handleVariableDefs(params) {
       // ignore
     }
   }
+  const map = await localVarMap(); // bulk, instead of one (hang-prone) lookup per id
   function varInfo(v) {
     return {
       id: v.id,
@@ -236,13 +274,13 @@ async function handleVariableDefs(params) {
       key: v.key,
       resolvedType: v.resolvedType,
       collectionId: v.variableCollectionId,
-      valuesByMode: v.valuesByMode,
+      valuesByMode: resolveValuesByMode(v.valuesByMode, map),
       description: v.description || undefined,
     };
   }
 
   if (params.scope === "all") {
-    const vars = await figma.variables.getLocalVariablesAsync();
+    const vars = Object.keys(map).map((k) => map[k]);
     for (const v of vars) await addCollection(v.variableCollectionId);
     return { scope: "all", count: vars.length, variables: vars.map(varInfo), collections: values(collections) };
   }
@@ -250,7 +288,6 @@ async function handleVariableDefs(params) {
   const nodes = await resolveTargetNodes(params.target);
   const ids = {};
   collectBoundVariableIds(nodes, ids);
-  const map = await localVarMap(); // bulk, instead of one (hang-prone) lookup per id
   const variables = [];
   for (const id of Object.keys(ids)) {
     const v = map[id];
@@ -264,6 +301,24 @@ async function handleVariableDefs(params) {
     }
   }
   return { scope: "target", count: variables.length, variables, collections: values(collections) };
+}
+
+// Resolve VARIABLE_ALIAS entries in a variable's valuesByMode to
+// { alias, aliasName } (one level) so token chains are readable. Literal values
+// pass through unchanged.
+function resolveValuesByMode(vbm, map) {
+  if (!vbm || typeof vbm !== "object") return vbm;
+  const out = {};
+  for (const mode of Object.keys(vbm)) {
+    const val = vbm[mode];
+    if (val && typeof val === "object" && val.type === "VARIABLE_ALIAS" && val.id) {
+      const t = map[val.id];
+      out[mode] = { alias: val.id, aliasName: t ? t.name : undefined };
+    } else {
+      out[mode] = val;
+    }
+  }
+  return out;
 }
 
 function collectBoundVariableIds(nodes, acc) {
@@ -1452,15 +1507,36 @@ async function componentObj(node) {
     } catch (e) {
       // ignore
     }
+    // Description / documentation links live on the component set when the main
+    // component is one of its variants.
+    let meta = main;
+    if (main && main.parent && main.parent.type === "COMPONENT_SET") meta = main.parent;
     return {
       mainComponentName: main ? main.name : undefined,
       mainComponentKey: main ? main.key : undefined,
       mainComponentId: main ? main.id : undefined,
+      description: meta ? meta.description || undefined : undefined,
+      documentationLinks: meta ? docLinks(meta) : undefined,
       properties: node.componentProperties ? serializeComponentProps(node.componentProperties) : undefined,
     };
   }
   if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
-    return { key: node.key, description: node.description || undefined };
+    return { key: node.key, description: node.description || undefined, documentationLinks: docLinks(node) };
+  }
+  return undefined;
+}
+
+// Component documentation links (the "Documentation" URLs set in Figma) as a
+// plain string array.
+function docLinks(node) {
+  try {
+    const dl = node.documentationLinks;
+    if (Array.isArray(dl) && dl.length) {
+      const uris = dl.map((d) => d && d.uri).filter(Boolean);
+      if (uris.length) return uris;
+    }
+  } catch (e) {
+    // ignore
   }
   return undefined;
 }
