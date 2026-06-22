@@ -1,0 +1,9 @@
+interface:
+  display_name: "YFigma Design to Figma"
+  short_description: "Design UI screens and write them into Figma"
+  default_prompt: "Use $yfigma-design-to-figma to design a polished UI screen and output it into my open Figma file."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "yasuda-figma-mcp"
+      description: "Provides yfigma_* tools for local Figma observation and declarative UI spec application."
