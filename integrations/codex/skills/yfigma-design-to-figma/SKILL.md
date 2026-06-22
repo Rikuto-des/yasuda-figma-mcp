@@ -36,23 +36,31 @@ Use this skill to turn a product/UI request into a declarative UI spec and apply
    - Use text nodes only for content that the design system cannot express as a component prop.
    - Compose layouts as nested `frame` nodes with `layout`, `gap`, `padding`, `width`, and `height`.
    - Favor dense, usable product UI over decorative marketing layouts unless the user explicitly asks for a landing/brand page.
+   - For mobile apps, design a complete first screen: safe-area-aware header, primary summary, key metrics, one obvious next action, scrollable content, and bottom navigation when appropriate.
+   - Avoid placeholder-looking artifacts such as single-letter avatar boxes, unexplained colored squares, unlabeled progress blocks, and generic icon text when a real label or component state is available.
 4. Build a UI spec:
    - Use `version: 1`.
    - Include one `root` node.
    - Set `target.mode` explicitly when not creating a new screen.
    - For instances, pass `componentId` and friendly `props` names from `yfigma_list_component_sets`.
-5. Validate and repair:
+5. Self-review the spec before tool validation:
+   - Check visual hierarchy: one primary value, 2-4 secondary metrics, clear section titles, and consistent typography scale.
+   - Check interaction affordances: navigation items, add/create actions, profile/settings entry, and tappable row/card states should look intentional.
+   - Check spacing rhythm: use consistent outer margins, section gaps, card padding, and row heights; avoid large empty vertical gaps unless the design is intentionally sparse.
+   - Check semantic color: do not use intense accent blocks as decoration. Reserve accent colors for status, progress, selected nav, and primary actions.
+   - Check Figma quality: no overlapping text, no clipped Japanese copy, no unexplained placeholders, no raw primitive look when a component can be used.
+6. Validate and repair:
    - Call `yfigma_apply_ui_spec` with `validateOnly: true`.
    - Treat warnings about literal color/spacing as design debt; replace with variables when possible.
    - Repeat until `valid: true`.
-6. Apply and confirm:
+7. Apply and confirm:
    - Call `yfigma_apply_ui_spec` without `validateOnly`.
    - Screenshot the returned root id.
    - If the screenshot reveals missing content, broken hierarchy, bad sizing, or wrong variants, update the spec and re-apply.
 
 ## Spec Help
 
-Read `references/ui-spec-patterns.md` before writing a non-trivial screen, when validation fails, or when using `into-selection`, `update-selection`, `INSTANCE_SWAP`, token binding, or nested frames.
+Read `references/ui-spec-patterns.md` before writing a non-trivial screen, when validation fails, or when using `into-selection`, `update-selection`, `INSTANCE_SWAP`, token binding, nested frames, or mobile dashboard layouts.
 
 If working inside the `yasuda-figma-mcp` repository, `docs/UI_SPEC.ja.md` is the canonical schema reference and `docs/IDE_TO_FIGMA.ja.md` explains the security model. Prefer those docs when exact behavior matters.
 
